@@ -1703,10 +1703,22 @@ function isObject(val) {
     return !!val && typeof val === "object" && !Array.isArray(val);
 }
 
+function getByPath(obj, path) {
+    if (!obj || !path) return undefined;
+    const parts = String(path).split(".");
+    let curr = obj;
+    for (const part of parts) {
+        if (!isObject(curr) || !(part in curr)) return undefined;
+        curr = curr[part];
+    }
+    return curr;
+}
+
 function readNum(obj, keys, fallback = 0) {
     for (const key of keys) {
-        if (!obj || obj[key] === undefined || obj[key] === null) continue;
-        const n = Number(obj[key]);
+        const val = getByPath(obj, key);
+        if (val === undefined || val === null) continue;
+        const n = Number(val);
         if (Number.isFinite(n)) return n;
     }
     return fallback;
@@ -1714,7 +1726,7 @@ function readNum(obj, keys, fallback = 0) {
 
 function readString(obj, keys, fallback = "") {
     for (const key of keys) {
-        const val = obj ? obj[key] : undefined;
+        const val = getByPath(obj, key);
         if (val === undefined || val === null) continue;
         if (typeof val === "string" && val.trim()) return val;
         if (typeof val === "number" || typeof val === "boolean") return String(val);
@@ -1730,9 +1742,56 @@ function collectArrayCandidates(root, keys) {
     if (!isObject(root)) return [];
     const found = [];
     keys.forEach(key => {
-        if (Array.isArray(root[key])) found.push(...root[key]);
+        const val = getByPath(root, key);
+        if (Array.isArray(val)) found.push(...val);
     });
     return found;
+}
+
+function discoverArraysDeep(root, maxDepth = 5) {
+    const arrays = [];
+    const visited = new Set();
+
+    function walk(node, depth) {
+        if (depth > maxDepth || !node || typeof node !== "object") return;
+        if (visited.has(node)) return;
+        visited.add(node);
+
+        if (Array.isArray(node)) {
+            arrays.push(node);
+            node.forEach(item => walk(item, depth + 1));
+            return;
+        }
+
+        Object.keys(node).forEach(k => walk(node[k], depth + 1));
+    }
+
+    walk(root, 0);
+    return arrays;
+}
+
+function looksLikeLineItem(item) {
+    if (!isObject(item)) return false;
+    const typeHint = readString(item, ["type", "kind", "objectType", "class"], "").toLowerCase();
+    if (typeHint.includes("line") || typeHint.includes("edge") || typeHint.includes("connector") || typeHint.includes("link")) return true;
+    const hasRefs = !!(
+        item.fromId || item.toId || item.sourceId || item.targetId || item.startNodeId || item.endNodeId ||
+        item.source || item.target || item.from || item.to || item.nodeA || item.nodeB
+    );
+    const hasCoords = ["x1", "y1", "x2", "y2", "startX", "startY", "endX", "endY"].some(k => readNum(item, [k], NaN) === readNum(item, [k], NaN));
+    return hasRefs || hasCoords;
+}
+
+function looksLikeNodeItem(item) {
+    if (!isObject(item)) return false;
+    if (looksLikeLineItem(item)) return false;
+    const hasGeom = [
+        "x", "y", "left", "top", "centerX", "centerY", "cx", "cy",
+        "bounds.x", "bounds.y", "position.x", "position.y"
+    ].some(k => Number.isFinite(readNum(item, [k], NaN)));
+    const hasSize = ["width", "height", "w", "h", "bounds.width", "bounds.height", "size.width", "size.height"].some(k => Number.isFinite(readNum(item, [k], NaN)));
+    const hasIdentity = !!readString(item, ["id", "uuid", "key", "name", "label", "text"], "");
+    return hasGeom || hasSize || hasIdentity;
 }
 
 function normalizeShapeType(shapeType) {
@@ -1759,25 +1818,25 @@ function normalizeShapeType(shapeType) {
 }
 
 function asTextLabel(item, fallback = "") {
-    const explicit = readString(item, ["text", "label", "name", "title", "value"], "");
+    const explicit = readString(item, ["text", "label", "name", "title", "value", "text.value", "data.label"], "");
     if (explicit) return explicit;
     if (isObject(item.text) && typeof item.text.value === "string") return item.text.value;
     return fallback;
 }
 
 function extractNodeGeometry(item, defaultIndex) {
-    const width = Math.max(60, readNum(item, ["width", "w", "boundsWidth", "sizeX"], 140));
-    const height = Math.max(30, readNum(item, ["height", "h", "boundsHeight", "sizeY"], 60));
+    const width = Math.max(60, readNum(item, ["width", "w", "boundsWidth", "sizeX", "bounds.width", "size.width", "frame.width", "rect.width"], 140));
+    const height = Math.max(30, readNum(item, ["height", "h", "boundsHeight", "sizeY", "bounds.height", "size.height", "frame.height", "rect.height"], 60));
 
-    let x = readNum(item, ["centerX", "cx"], NaN);
-    let y = readNum(item, ["centerY", "cy"], NaN);
+    let x = readNum(item, ["centerX", "cx", "bounds.centerX", "position.centerX"], NaN);
+    let y = readNum(item, ["centerY", "cy", "bounds.centerY", "position.centerY"], NaN);
 
     if (!Number.isFinite(x)) {
-        const left = readNum(item, ["x", "left", "posX", "boundsX"], NaN);
+        const left = readNum(item, ["x", "left", "posX", "boundsX", "bounds.x", "position.x", "frame.x", "rect.x"], NaN);
         x = Number.isFinite(left) ? left + width / 2 : defaultIndex * 180;
     }
     if (!Number.isFinite(y)) {
-        const top = readNum(item, ["y", "top", "posY", "boundsY"], NaN);
+        const top = readNum(item, ["y", "top", "posY", "boundsY", "bounds.y", "position.y", "frame.y", "rect.y"], NaN);
         y = Number.isFinite(top) ? top + height / 2 : 0;
     }
 
@@ -1861,6 +1920,16 @@ function convertLucidchartLikeData(rawData) {
         });
     });
 
+    // Deep fallback: many exports nest arrays under unknown keys.
+    const deepArrays = discoverArraysDeep(rawData, 6);
+    deepArrays.forEach(arr => {
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        const nodeLike = arr.filter(looksLikeNodeItem);
+        const lineLike = arr.filter(looksLikeLineItem);
+        if (nodeLike.length >= 1) shapeCandidates.push(...nodeLike);
+        if (lineLike.length >= 1) lineCandidates.push(...lineLike);
+    });
+
     const nodesOut = {};
     const nodeList = [];
     let fallbackIdx = 0;
@@ -1874,11 +1943,11 @@ function convertLucidchartLikeData(rawData) {
         }
 
         const geometry = extractNodeGeometry(item, fallbackIdx++);
-        const rawId = readString(item, ["id", "uuid", "key", "nodeId", "shapeId"], "");
+        const rawId = readString(item, ["id", "uuid", "key", "nodeId", "shapeId", "meta.id", "data.id"], "");
         const id = rawId || `lucid_node_${fallbackIdx}`;
         if (nodesOut[id]) return;
 
-        const shapeType = normalizeShapeType(readString(item, ["shapeType", "shape", "type"], "rectangle"));
+        const shapeType = normalizeShapeType(readString(item, ["shapeType", "shape", "type", "kind", "class"], "rectangle"));
         const node = {
             id,
             type: "shape",
@@ -1890,11 +1959,11 @@ function convertLucidchartLikeData(rawData) {
             text: asTextLabel(item, "Node"),
             textOffset: { x: 0, y: 0 },
             textSize: 14,
-            bgColor: readString(item, ["fillColor", "backgroundColor", "bgColor"], "#ffffff"),
-            borderColor: readString(item, ["strokeColor", "lineColor", "borderColor"], "#64748b"),
-            borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth"], 2)),
-            borderStyle: readString(item, ["borderStyle", "lineStyle"], "solid"),
-            url: readString(item, ["url", "link", "href"], "")
+            bgColor: readString(item, ["fillColor", "backgroundColor", "bgColor", "style.fill", "style.fillColor"], "#ffffff"),
+            borderColor: readString(item, ["strokeColor", "lineColor", "borderColor", "style.stroke", "style.strokeColor"], "#64748b"),
+            borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth", "style.strokeWidth"], 2)),
+            borderStyle: readString(item, ["borderStyle", "lineStyle", "style.strokeStyle"], "solid"),
+            url: readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], "")
         };
 
         nodesOut[id] = node;
@@ -1911,17 +1980,17 @@ function convertLucidchartLikeData(rawData) {
     lineCandidates.forEach(item => {
         if (!isObject(item)) return;
 
-        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA;
-        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB;
+        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA || getByPath(item, "source.id") || getByPath(item, "start.id");
+        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB || getByPath(item, "target.id") || getByPath(item, "end.id");
 
         let fromId = typeof fromRef === "string" ? fromRef : readString(fromRef, ["id", "nodeId", "shapeId"], "");
         let toId = typeof toRef === "string" ? toRef : readString(toRef, ["id", "nodeId", "shapeId"], "");
 
         if (!nodesOut[fromId] || !nodesOut[toId]) {
-            const sx = readNum(item, ["x1", "startX", "fromX"], NaN);
-            const sy = readNum(item, ["y1", "startY", "fromY"], NaN);
-            const ex = readNum(item, ["x2", "endX", "toX"], NaN);
-            const ey = readNum(item, ["y2", "endY", "toY"], NaN);
+            const sx = readNum(item, ["x1", "startX", "fromX", "start.x", "source.x", "points.0.x"], NaN);
+            const sy = readNum(item, ["y1", "startY", "fromY", "start.y", "source.y", "points.0.y"], NaN);
+            const ex = readNum(item, ["x2", "endX", "toX", "end.x", "target.x"], NaN);
+            const ey = readNum(item, ["y2", "endY", "toY", "end.y", "target.y"], NaN);
 
             if (!nodesOut[fromId]) fromId = getNearestNodeIdByPoint(sx, sy, nodeList);
             if (!nodesOut[toId]) toId = getNearestNodeIdByPoint(ex, ey, nodeList);
@@ -1938,15 +2007,15 @@ function convertLucidchartLikeData(rawData) {
 
         lineIdx += 1;
         linesOut.push({
-            id: readString(item, ["id", "uuid", "key"], `lucid_line_${lineIdx}`),
+            id: readString(item, ["id", "uuid", "key", "meta.id"], `lucid_line_${lineIdx}`),
             fromId,
             fromPort,
             toId,
             toPort,
             lineType: "orthogonal",
-            lineStyle: readString(item, ["lineStyle", "style"], "solid"),
-            color: readString(item, ["strokeColor", "color", "lineColor"], "#64748b"),
-            thickness: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "thickness"], 2.5)),
+            lineStyle: readString(item, ["lineStyle", "style", "style.strokeStyle"], "solid"),
+            color: readString(item, ["strokeColor", "color", "lineColor", "style.stroke", "style.strokeColor"], "#64748b"),
+            thickness: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "thickness", "style.strokeWidth"], 2.5)),
             hasArrow: readString(item, ["hasArrow", "arrow", "arrowType"], "end")
         });
     });
@@ -1999,7 +2068,8 @@ function importJsonFile(e) {
                     alert("Lucidchart JSON imported successfully (best effort conversion).");
                 }
             } else {
-                alert("Invalid format: expected FlowCraft JSON or a Lucidchart-like export with shapes/nodes.");
+                const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
+                alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
             }
         } catch(err) {
             alert("Error parsing file: " + err.message);
