@@ -1897,6 +1897,214 @@ function autoLayoutNodesWhenGeometryMissing(nodesOut, linesOut) {
     });
 }
 
+function toArray(val) {
+    if (val === undefined || val === null) return [];
+    return Array.isArray(val) ? val : [val];
+}
+
+function parseMaybeNumber(value, fallback = NaN) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function getXmlNodeText(node) {
+    if (node === undefined || node === null) return "";
+    if (typeof node === "string" || typeof node === "number") return String(node);
+    if (Array.isArray(node)) return node.map(getXmlNodeText).join("");
+    if (typeof node !== "object") return "";
+
+    let out = "";
+    if (typeof node["#text"] === "string") out += node["#text"];
+
+    Object.keys(node).forEach(key => {
+        if (key.startsWith("@_") || key === "#text") return;
+        out += getXmlNodeText(node[key]);
+    });
+
+    return out;
+}
+
+function getCellValue(node, cellName) {
+    const readFrom = container => {
+        const cells = toArray(container?.Cell);
+        const match = cells.find(c => String(c?.["@_N"] || "") === cellName);
+        return match?.["@_V"];
+    };
+
+    const fromXForm = readFrom(node?.XForm);
+    if (fromXForm !== undefined) return fromXForm;
+    const fromDirect = readFrom(node);
+    if (fromDirect !== undefined) return fromDirect;
+    return undefined;
+}
+
+function flattenVisioShapes(shapeNodes, collector) {
+    toArray(shapeNodes).forEach(shape => {
+        if (!isObject(shape)) return;
+        collector.push(shape);
+        const childShapes = shape?.Shapes?.Shape;
+        if (childShapes) flattenVisioShapes(childShapes, collector);
+    });
+}
+
+function buildPortByPosition(fromNode, toNode) {
+    return getPortToward(fromNode, toNode);
+}
+
+async function parseVsdxToFlowcraft(file) {
+    if (typeof JSZip === "undefined" || typeof XMLParser === "undefined") {
+        throw new Error("VSDX libraries not loaded. Refresh the page and try again.");
+    }
+
+    const xmlParser = new XMLParser({
+        ignoreAttributes: false,
+        attributeNamePrefix: "@_",
+        textNodeName: "#text",
+        trimValues: false
+    });
+
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const pagePaths = Object.keys(zip.files)
+        .filter(p => /^visio\/pages\/page\d+\.xml$/i.test(p))
+        .sort((a, b) => {
+            const ai = parseInt((a.match(/page(\d+)\.xml/i) || ["", "0"])[1], 10);
+            const bi = parseInt((b.match(/page(\d+)\.xml/i) || ["", "0"])[1], 10);
+            return ai - bi;
+        });
+
+    if (pagePaths.length === 0) {
+        throw new Error("No Visio page XML found in VSDX.");
+    }
+
+    const nodesOut = {};
+    const linesOut = [];
+    let globalLineCounter = 0;
+
+    for (let pageIndex = 0; pageIndex < pagePaths.length; pageIndex += 1) {
+        const pagePath = pagePaths[pageIndex];
+        const xmlText = await zip.file(pagePath).async("string");
+        const pageXml = xmlParser.parse(xmlText);
+
+        const pageRoot = pageXml?.PageContents || pageXml?.Page || pageXml;
+        const pageSheet = pageRoot?.PageSheet || pageXml?.PageSheet;
+        const pageHeightIn = parseMaybeNumber(getCellValue(pageSheet, "PageHeight"), 8.5);
+        const pageWidthIn = parseMaybeNumber(getCellValue(pageSheet, "PageWidth"), 11);
+        const pageHeightPx = pageHeightIn * 96;
+        const pageWidthPx = pageWidthIn * 96;
+        const pageYOffset = pageIndex * (pageHeightPx + 300);
+
+        const flattenedShapes = [];
+        flattenVisioShapes(pageRoot?.Shapes?.Shape, flattenedShapes);
+
+        const connectorIds = new Set();
+
+        flattenedShapes.forEach(shape => {
+            const id = String(shape?.["@_ID"] || "").trim();
+            if (!id || nodesOut[id]) return;
+
+            const oneD = String(getCellValue(shape, "OneD") || "").trim();
+            const nameHint = String(shape?.["@_NameU"] || shape?.["@_Name"] || "").toLowerCase();
+            const isConnector = oneD === "1" || nameHint.includes("connector") || nameHint.includes("dynamic connector");
+            if (isConnector) {
+                connectorIds.add(id);
+                return;
+            }
+
+            const pinX = parseMaybeNumber(getCellValue(shape, "PinX"), NaN);
+            const pinY = parseMaybeNumber(getCellValue(shape, "PinY"), NaN);
+            const width = Math.max(60, parseMaybeNumber(getCellValue(shape, "Width"), 1.4) * 96);
+            const height = Math.max(30, parseMaybeNumber(getCellValue(shape, "Height"), 0.8) * 96);
+
+            let x = Number.isFinite(pinX) ? pinX * 96 : 0;
+            let y = Number.isFinite(pinY) ? (pageHeightPx - (pinY * 96)) : 0;
+
+            x = snap(x - pageWidthPx / 2);
+            y = snap(y - pageHeightPx / 2 + pageYOffset);
+
+            const text = getXmlNodeText(shape?.Text).replace(/\s+/g, " ").trim();
+            const nodeType = shape?.ForeignData || shape?.Image ? "image" : "shape";
+            const node = {
+                id,
+                type: nodeType,
+                shapeType: "rectangle",
+                x,
+                y,
+                width: snap(width),
+                height: snap(height),
+                text: text || String(shape?.["@_NameU"] || shape?.["@_Name"] || `Shape ${id}`),
+                textOffset: { x: 0, y: 0 },
+                textSize: 14,
+                bgColor: nodeType === "image" ? "transparent" : "#ffffff",
+                borderColor: nodeType === "image" ? "transparent" : "#64748b",
+                borderWidth: nodeType === "image" ? 0 : 2,
+                borderStyle: "solid",
+                url: ""
+            };
+
+            nodesOut[id] = node;
+        });
+
+        const connects = toArray(pageRoot?.Connects?.Connect);
+        const connectorMap = {};
+
+        connects.forEach(conn => {
+            const fromSheet = String(conn?.["@_FromSheet"] || "").trim();
+            const toSheet = String(conn?.["@_ToSheet"] || "").trim();
+            const fromCell = String(conn?.["@_FromCell"] || "").toLowerCase();
+
+            if (!fromSheet || !toSheet) return;
+            if (!connectorIds.has(fromSheet)) return;
+            if (!nodesOut[toSheet]) return;
+
+            if (!connectorMap[fromSheet]) connectorMap[fromSheet] = { fromId: null, toId: null };
+
+            if (fromCell.includes("begin")) {
+                connectorMap[fromSheet].fromId = toSheet;
+            } else if (fromCell.includes("end")) {
+                connectorMap[fromSheet].toId = toSheet;
+            } else if (!connectorMap[fromSheet].fromId) {
+                connectorMap[fromSheet].fromId = toSheet;
+            } else if (!connectorMap[fromSheet].toId) {
+                connectorMap[fromSheet].toId = toSheet;
+            }
+        });
+
+        Object.keys(connectorMap).forEach(connectorId => {
+            const entry = connectorMap[connectorId];
+            if (!entry?.fromId || !entry?.toId || entry.fromId === entry.toId) return;
+            const fromNode = nodesOut[entry.fromId];
+            const toNode = nodesOut[entry.toId];
+            if (!fromNode || !toNode) return;
+
+            globalLineCounter += 1;
+            linesOut.push({
+                id: `vsdx_line_${connectorId}_${globalLineCounter}`,
+                fromId: entry.fromId,
+                fromPort: buildPortByPosition(fromNode, toNode),
+                toId: entry.toId,
+                toPort: buildPortByPosition(toNode, fromNode),
+                lineType: "orthogonal",
+                lineStyle: "solid",
+                color: "#64748b",
+                thickness: 2.5,
+                hasArrow: "end"
+            });
+        });
+    }
+
+    if (Object.keys(nodesOut).length === 0) {
+        throw new Error("No shapes found in VSDX pages.");
+    }
+
+    return {
+        format: "flowcraft",
+        version: "1.0",
+        name: file.name.replace(/\.vsdx$/i, "") || "Imported VSDX Diagram",
+        nodes: nodesOut,
+        lines: linesOut
+    };
+}
+
 function getNearestNodeIdByPoint(x, y, nodeList) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || nodeList.length === 0) return null;
     let bestId = null;
@@ -2118,38 +2326,47 @@ function exportJsonFile() {
     a.click();
 }
 
-function importJsonFile(e) {
+async function importJsonFile(e) {
     const file = e.target.files[0];
     if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = function(evt) {
-        try {
-            const data = JSON.parse(evt.target.result);
-            const normalized = normalizeImportedData(data);
-            if (normalized) {
-                loadSessionData(normalized.data);
-                currentLocalSaveName = "";
-                currentDriveFileId = null;
-                undoStack = [];
-                redoStack = [];
-                saveHistory();
-                centerCanvas();
-                if (normalized.source === "flowcraft") {
-                    alert("Flowchart imported successfully!");
-                } else {
-                    alert("Lucidchart JSON imported successfully (best effort conversion).");
-                }
-            } else {
+
+    try {
+        let normalized = null;
+        const isVsdx = /\.vsdx$/i.test(file.name);
+
+        if (isVsdx) {
+            const flowcraftData = await parseVsdxToFlowcraft(file);
+            normalized = { data: flowcraftData, source: "vsdx" };
+        } else {
+            const data = JSON.parse(await file.text());
+            normalized = normalizeImportedData(data);
+            if (!normalized) {
                 const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
                 alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
+                return;
             }
-        } catch(err) {
-            alert("Error parsing file: " + err.message);
         }
-    };
-    reader.readAsText(file);
-    fileImportInput.value = "";
+
+        loadSessionData(normalized.data);
+        currentLocalSaveName = "";
+        currentDriveFileId = null;
+        undoStack = [];
+        redoStack = [];
+        saveHistory();
+        centerCanvas();
+
+        if (normalized.source === "flowcraft") {
+            alert("Flowchart imported successfully!");
+        } else if (normalized.source === "lucidchart") {
+            alert("Lucidchart JSON imported successfully (best effort conversion).");
+        } else if (normalized.source === "vsdx") {
+            alert("VSDX imported successfully (best effort conversion).");
+        }
+    } catch (err) {
+        alert("Error parsing file: " + err.message);
+    } finally {
+        fileImportInput.value = "";
+    }
 }
 
 // --- Google Drive & OAuth Integration (Domain Restricted) ---

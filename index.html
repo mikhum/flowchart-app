@@ -16,6 +16,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fast-xml-parser@4.5.0/src/fxp.min.js"></script>
     
     <!-- Google Identity Services client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -241,7 +243,7 @@
                         <button class="btn btn-outline" id="btn-import-json">
                             <i class="fa-solid fa-file-import"></i> Import JSON
                         </button>
-                        <input type="file" id="file-import-input" accept=".json,.flowchart" style="display: none;">
+                        <input type="file" id="file-import-input" accept=".json,.flowchart,.vsdx" style="display: none;">
                     </div>
                 </div>
             </div>
