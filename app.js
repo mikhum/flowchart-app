@@ -96,6 +96,7 @@ const btnExportWord = document.getElementById("btn-export-word");
 const btnExportPDF = document.getElementById("btn-export-pdf");
 const btnExportJson = document.getElementById("btn-export-json");
 const btnImportJson = document.getElementById("btn-import-json");
+const btnImportVsdx = document.getElementById("btn-import-vsdx");
 const fileImportInput = document.getElementById("file-import-input");
 
 // Local Workspaces
@@ -383,7 +384,14 @@ function setupEventListeners() {
     btnExportWord.addEventListener("click", exportToWord);
     btnExportPDF.addEventListener("click", exportToPDF);
     btnExportJson.addEventListener("click", exportJsonFile);
-    btnImportJson.addEventListener("click", () => fileImportInput.click());
+    btnImportJson.addEventListener("click", () => {
+        fileImportInput.accept = ".json,.flowchart";
+        fileImportInput.click();
+    });
+    btnImportVsdx.addEventListener("click", () => {
+        fileImportInput.accept = ".vsdx";
+        fileImportInput.click();
+    });
     fileImportInput.addEventListener("change", importJsonFile);
 
     // Modals buttons
