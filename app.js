@@ -1915,44 +1915,46 @@ function parseMaybeNumber(value, fallback = NaN) {
     return Number.isFinite(n) ? n : fallback;
 }
 
-function getXmlNodeText(node) {
-    if (node === undefined || node === null) return "";
-    if (typeof node === "string" || typeof node === "number") return String(node);
-    if (Array.isArray(node)) return node.map(getXmlNodeText).join("");
-    if (typeof node !== "object") return "";
+function hasLocalName(el, name) {
+    return !!el && el.nodeType === 1 && String(el.localName || el.nodeName || "").toLowerCase() === String(name).toLowerCase();
+}
 
-    let out = "";
-    if (typeof node["#text"] === "string") out += node["#text"];
-
-    Object.keys(node).forEach(key => {
-        if (key.startsWith("@_") || key === "#text") return;
-        out += getXmlNodeText(node[key]);
-    });
-
+function getDescendantsByLocalName(root, name) {
+    if (!root || !root.getElementsByTagName) return [];
+    const all = root.getElementsByTagName("*");
+    const out = [];
+    for (let i = 0; i < all.length; i += 1) {
+        if (hasLocalName(all[i], name)) out.push(all[i]);
+    }
     return out;
 }
 
-function getCellValue(node, cellName) {
-    const readFrom = container => {
-        const cells = toArray(container?.Cell);
-        const match = cells.find(c => String(c?.["@_N"] || "") === cellName);
-        return match?.["@_V"];
-    };
-
-    const fromXForm = readFrom(node?.XForm);
-    if (fromXForm !== undefined) return fromXForm;
-    const fromDirect = readFrom(node);
-    if (fromDirect !== undefined) return fromDirect;
-    return undefined;
+function getFirstDescendantByLocalName(root, name) {
+    const matches = getDescendantsByLocalName(root, name);
+    return matches.length ? matches[0] : null;
 }
 
-function flattenVisioShapes(shapeNodes, collector) {
-    toArray(shapeNodes).forEach(shape => {
-        if (!isObject(shape)) return;
-        collector.push(shape);
-        const childShapes = shape?.Shapes?.Shape;
-        if (childShapes) flattenVisioShapes(childShapes, collector);
-    });
+function getDirectChildrenByLocalName(root, name) {
+    if (!root || !root.children) return [];
+    const out = [];
+    for (let i = 0; i < root.children.length; i += 1) {
+        if (hasLocalName(root.children[i], name)) out.push(root.children[i]);
+    }
+    return out;
+}
+
+function getVisioCellValue(containerEl, cellName) {
+    if (!containerEl) return undefined;
+    const directCells = getDirectChildrenByLocalName(containerEl, "Cell");
+    const match = directCells.find(cell => String(cell.getAttribute("N") || "") === cellName);
+    return match ? match.getAttribute("V") : undefined;
+}
+
+function getVisioShapeCellValue(shapeEl, cellName) {
+    const xform = getFirstDescendantByLocalName(shapeEl, "XForm");
+    const fromXform = getVisioCellValue(xform, cellName);
+    if (fromXform !== undefined) return fromXform;
+    return getVisioCellValue(shapeEl, cellName);
 }
 
 function buildPortByPosition(fromNode, toNode) {
@@ -1960,20 +1962,9 @@ function buildPortByPosition(fromNode, toNode) {
 }
 
 async function parseVsdxToFlowcraft(file) {
-    const XMLParserCtor = (typeof XMLParser !== "undefined" && XMLParser)
-        || (typeof window !== "undefined" && window.fxparser && window.fxparser.XMLParser)
-        || null;
-
-    if (typeof JSZip === "undefined" || !XMLParserCtor) {
-        throw new Error("VSDX libraries not loaded. Refresh the page and try again.");
+    if (typeof JSZip === "undefined") {
+        throw new Error("VSDX library not loaded. Refresh the page and try again.");
     }
-
-    const xmlParser = new XMLParserCtor({
-        ignoreAttributes: false,
-        attributeNamePrefix: "@_",
-        textNodeName: "#text",
-        trimValues: false
-    });
 
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const pagePaths = Object.keys(zip.files)
@@ -1995,37 +1986,40 @@ async function parseVsdxToFlowcraft(file) {
     for (let pageIndex = 0; pageIndex < pagePaths.length; pageIndex += 1) {
         const pagePath = pagePaths[pageIndex];
         const xmlText = await zip.file(pagePath).async("string");
-        const pageXml = xmlParser.parse(xmlText);
+        const xmlDoc = new DOMParser().parseFromString(xmlText, "application/xml");
+        const parseErrors = xmlDoc.getElementsByTagName("parsererror");
+        if (parseErrors && parseErrors.length > 0) {
+            throw new Error(`Failed to parse VSDX XML at ${pagePath}`);
+        }
 
-        const pageRoot = pageXml?.PageContents || pageXml?.Page || pageXml;
-        const pageSheet = pageRoot?.PageSheet || pageXml?.PageSheet;
-        const pageHeightIn = parseMaybeNumber(getCellValue(pageSheet, "PageHeight"), 8.5);
-        const pageWidthIn = parseMaybeNumber(getCellValue(pageSheet, "PageWidth"), 11);
+        const pageRoot = xmlDoc.documentElement;
+        const pageSheet = getFirstDescendantByLocalName(pageRoot, "PageSheet");
+        const pageHeightIn = parseMaybeNumber(getVisioCellValue(pageSheet, "PageHeight"), 8.5);
+        const pageWidthIn = parseMaybeNumber(getVisioCellValue(pageSheet, "PageWidth"), 11);
         const pageHeightPx = pageHeightIn * 96;
         const pageWidthPx = pageWidthIn * 96;
         const pageYOffset = pageIndex * (pageHeightPx + 300);
 
-        const flattenedShapes = [];
-        flattenVisioShapes(pageRoot?.Shapes?.Shape, flattenedShapes);
+        const flattenedShapes = getDescendantsByLocalName(pageRoot, "Shape");
 
         const connectorIds = new Set();
 
         flattenedShapes.forEach(shape => {
-            const id = String(shape?.["@_ID"] || "").trim();
+            const id = String(shape.getAttribute("ID") || "").trim();
             if (!id || nodesOut[id]) return;
 
-            const oneD = String(getCellValue(shape, "OneD") || "").trim();
-            const nameHint = String(shape?.["@_NameU"] || shape?.["@_Name"] || "").toLowerCase();
+            const oneD = String(getVisioShapeCellValue(shape, "OneD") || "").trim();
+            const nameHint = String(shape.getAttribute("NameU") || shape.getAttribute("Name") || "").toLowerCase();
             const isConnector = oneD === "1" || nameHint.includes("connector") || nameHint.includes("dynamic connector");
             if (isConnector) {
                 connectorIds.add(id);
                 return;
             }
 
-            const pinX = parseMaybeNumber(getCellValue(shape, "PinX"), NaN);
-            const pinY = parseMaybeNumber(getCellValue(shape, "PinY"), NaN);
-            const width = Math.max(60, parseMaybeNumber(getCellValue(shape, "Width"), 1.4) * 96);
-            const height = Math.max(30, parseMaybeNumber(getCellValue(shape, "Height"), 0.8) * 96);
+            const pinX = parseMaybeNumber(getVisioShapeCellValue(shape, "PinX"), NaN);
+            const pinY = parseMaybeNumber(getVisioShapeCellValue(shape, "PinY"), NaN);
+            const width = Math.max(60, parseMaybeNumber(getVisioShapeCellValue(shape, "Width"), 1.4) * 96);
+            const height = Math.max(30, parseMaybeNumber(getVisioShapeCellValue(shape, "Height"), 0.8) * 96);
 
             let x = Number.isFinite(pinX) ? pinX * 96 : 0;
             let y = Number.isFinite(pinY) ? (pageHeightPx - (pinY * 96)) : 0;
@@ -2033,8 +2027,9 @@ async function parseVsdxToFlowcraft(file) {
             x = snap(x - pageWidthPx / 2);
             y = snap(y - pageHeightPx / 2 + pageYOffset);
 
-            const text = getXmlNodeText(shape?.Text).replace(/\s+/g, " ").trim();
-            const nodeType = shape?.ForeignData || shape?.Image ? "image" : "shape";
+            const textEl = getFirstDescendantByLocalName(shape, "Text");
+            const text = textEl ? String(textEl.textContent || "").replace(/\s+/g, " ").trim() : "";
+            const nodeType = getFirstDescendantByLocalName(shape, "ForeignData") ? "image" : "shape";
             const node = {
                 id,
                 type: nodeType,
@@ -2043,7 +2038,7 @@ async function parseVsdxToFlowcraft(file) {
                 y,
                 width: snap(width),
                 height: snap(height),
-                text: text || String(shape?.["@_NameU"] || shape?.["@_Name"] || `Shape ${id}`),
+                text: text || String(shape.getAttribute("NameU") || shape.getAttribute("Name") || `Shape ${id}`),
                 textOffset: { x: 0, y: 0 },
                 textSize: 14,
                 bgColor: nodeType === "image" ? "transparent" : "#ffffff",
@@ -2056,13 +2051,13 @@ async function parseVsdxToFlowcraft(file) {
             nodesOut[id] = node;
         });
 
-        const connects = toArray(pageRoot?.Connects?.Connect);
+        const connects = getDescendantsByLocalName(pageRoot, "Connect");
         const connectorMap = {};
 
         connects.forEach(conn => {
-            const fromSheet = String(conn?.["@_FromSheet"] || "").trim();
-            const toSheet = String(conn?.["@_ToSheet"] || "").trim();
-            const fromCell = String(conn?.["@_FromCell"] || "").toLowerCase();
+            const fromSheet = String(conn.getAttribute("FromSheet") || "").trim();
+            const toSheet = String(conn.getAttribute("ToSheet") || "").trim();
+            const fromCell = String(conn.getAttribute("FromCell") || "").toLowerCase();
 
             if (!fromSheet || !toSheet) return;
             if (!connectorIds.has(fromSheet)) return;
