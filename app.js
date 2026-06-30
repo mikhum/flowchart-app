@@ -1699,6 +1699,267 @@ function saveAutosave() {
 }
 
 // --- Import/Export Local Files JSON ---
+function isObject(val) {
+    return !!val && typeof val === "object" && !Array.isArray(val);
+}
+
+function readNum(obj, keys, fallback = 0) {
+    for (const key of keys) {
+        if (!obj || obj[key] === undefined || obj[key] === null) continue;
+        const n = Number(obj[key]);
+        if (Number.isFinite(n)) return n;
+    }
+    return fallback;
+}
+
+function readString(obj, keys, fallback = "") {
+    for (const key of keys) {
+        const val = obj ? obj[key] : undefined;
+        if (val === undefined || val === null) continue;
+        if (typeof val === "string" && val.trim()) return val;
+        if (typeof val === "number" || typeof val === "boolean") return String(val);
+    }
+    return fallback;
+}
+
+function isFlowcraftFormat(data) {
+    return isObject(data) && data.format === "flowcraft" && isObject(data.nodes);
+}
+
+function collectArrayCandidates(root, keys) {
+    if (!isObject(root)) return [];
+    const found = [];
+    keys.forEach(key => {
+        if (Array.isArray(root[key])) found.push(...root[key]);
+    });
+    return found;
+}
+
+function normalizeShapeType(shapeType) {
+    const val = (shapeType || "").toString().trim().toLowerCase();
+    const map = {
+        process: "rectangle",
+        decision: "diamond",
+        terminator: "terminator",
+        database: "cylinder",
+        data: "parallelogram",
+        io: "parallelogram",
+        connector: "circle",
+        document: "document",
+        preparation: "hexagon"
+    };
+    const supported = new Set([
+        "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
+        "predefined-process", "multi-document", "horizontal-cylinder", "display", "summing-junction", "or-junction",
+        "off-page", "triangle", "right-triangle", "octagon", "cross", "cloud-shape",
+        "server", "router", "switch", "firewall", "cloud", "pc", "user", "star"
+    ]);
+    const mapped = map[val] || val;
+    return supported.has(mapped) ? mapped : "rectangle";
+}
+
+function asTextLabel(item, fallback = "") {
+    const explicit = readString(item, ["text", "label", "name", "title", "value"], "");
+    if (explicit) return explicit;
+    if (isObject(item.text) && typeof item.text.value === "string") return item.text.value;
+    return fallback;
+}
+
+function extractNodeGeometry(item, defaultIndex) {
+    const width = Math.max(60, readNum(item, ["width", "w", "boundsWidth", "sizeX"], 140));
+    const height = Math.max(30, readNum(item, ["height", "h", "boundsHeight", "sizeY"], 60));
+
+    let x = readNum(item, ["centerX", "cx"], NaN);
+    let y = readNum(item, ["centerY", "cy"], NaN);
+
+    if (!Number.isFinite(x)) {
+        const left = readNum(item, ["x", "left", "posX", "boundsX"], NaN);
+        x = Number.isFinite(left) ? left + width / 2 : defaultIndex * 180;
+    }
+    if (!Number.isFinite(y)) {
+        const top = readNum(item, ["y", "top", "posY", "boundsY"], NaN);
+        y = Number.isFinite(top) ? top + height / 2 : 0;
+    }
+
+    return { x: snap(x), y: snap(y), width: snap(width), height: snap(height) };
+}
+
+function getNearestNodeIdByPoint(x, y, nodeList) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || nodeList.length === 0) return null;
+    let bestId = null;
+    let bestDist = Infinity;
+    nodeList.forEach(node => {
+        const d = Math.hypot(x - node.x, y - node.y);
+        if (d < bestDist) {
+            bestDist = d;
+            bestId = node.id;
+        }
+    });
+    return bestId;
+}
+
+function getPortToward(node, otherNode) {
+    if (!node || !otherNode) return "right";
+    const dx = otherNode.x - node.x;
+    const dy = otherNode.y - node.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+        return dx >= 0 ? "right" : "left";
+    }
+    return dy >= 0 ? "bottom" : "top";
+}
+
+function normalizeImportedData(rawData) {
+    if (isFlowcraftFormat(rawData)) {
+        return { data: rawData, source: "flowcraft" };
+    }
+
+    // Some tools wrap payloads under common envelope keys.
+    const wrapped = [rawData?.diagram, rawData?.document, rawData?.data].find(isObject);
+    if (wrapped && isFlowcraftFormat(wrapped)) {
+        return { data: wrapped, source: "flowcraft" };
+    }
+
+    const lucidConverted = convertLucidchartLikeData(rawData);
+    if (lucidConverted) {
+        return { data: lucidConverted, source: "lucidchart" };
+    }
+
+    return null;
+}
+
+function convertLucidchartLikeData(rawData) {
+    const roots = [rawData].filter(isObject);
+    const pages = [];
+
+    if (Array.isArray(rawData?.pages)) pages.push(...rawData.pages.filter(isObject));
+    if (isObject(rawData?.page)) pages.push(rawData.page);
+    if (isObject(rawData?.document) && Array.isArray(rawData.document.pages)) {
+        pages.push(...rawData.document.pages.filter(isObject));
+    }
+
+    roots.push(...pages);
+
+    const shapeKeys = ["nodes", "shapes", "objects", "elements", "items", "entities"]; 
+    const lineKeys = ["lines", "connectors", "edges", "links", "connections"]; 
+
+    const shapeCandidates = [];
+    const lineCandidates = [];
+
+    roots.forEach(root => {
+        shapeCandidates.push(...collectArrayCandidates(root, shapeKeys));
+        lineCandidates.push(...collectArrayCandidates(root, lineKeys));
+
+        // Mixed arrays are common, split by semantic type hints.
+        const mixed = collectArrayCandidates(root, ["items", "elements", "objects"]);
+        mixed.forEach(item => {
+            const t = (readString(item, ["type", "kind", "objectType"], "")).toLowerCase();
+            if (t.includes("line") || t.includes("edge") || t.includes("connector") || t.includes("link")) {
+                lineCandidates.push(item);
+            } else {
+                shapeCandidates.push(item);
+            }
+        });
+    });
+
+    const nodesOut = {};
+    const nodeList = [];
+    let fallbackIdx = 0;
+
+    shapeCandidates.forEach(item => {
+        if (!isObject(item)) return;
+
+        const maybeType = readString(item, ["type", "shape", "shapeType", "kind"], "").toLowerCase();
+        if (maybeType.includes("line") || maybeType.includes("edge") || maybeType.includes("connector") || maybeType.includes("link")) {
+            return;
+        }
+
+        const geometry = extractNodeGeometry(item, fallbackIdx++);
+        const rawId = readString(item, ["id", "uuid", "key", "nodeId", "shapeId"], "");
+        const id = rawId || `lucid_node_${fallbackIdx}`;
+        if (nodesOut[id]) return;
+
+        const shapeType = normalizeShapeType(readString(item, ["shapeType", "shape", "type"], "rectangle"));
+        const node = {
+            id,
+            type: "shape",
+            shapeType,
+            x: geometry.x,
+            y: geometry.y,
+            width: geometry.width,
+            height: geometry.height,
+            text: asTextLabel(item, "Node"),
+            textOffset: { x: 0, y: 0 },
+            textSize: 14,
+            bgColor: readString(item, ["fillColor", "backgroundColor", "bgColor"], "#ffffff"),
+            borderColor: readString(item, ["strokeColor", "lineColor", "borderColor"], "#64748b"),
+            borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth"], 2)),
+            borderStyle: readString(item, ["borderStyle", "lineStyle"], "solid"),
+            url: readString(item, ["url", "link", "href"], "")
+        };
+
+        nodesOut[id] = node;
+        nodeList.push(node);
+    });
+
+    if (Object.keys(nodesOut).length === 0) {
+        return null;
+    }
+
+    const linesOut = [];
+    let lineIdx = 0;
+
+    lineCandidates.forEach(item => {
+        if (!isObject(item)) return;
+
+        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA;
+        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB;
+
+        let fromId = typeof fromRef === "string" ? fromRef : readString(fromRef, ["id", "nodeId", "shapeId"], "");
+        let toId = typeof toRef === "string" ? toRef : readString(toRef, ["id", "nodeId", "shapeId"], "");
+
+        if (!nodesOut[fromId] || !nodesOut[toId]) {
+            const sx = readNum(item, ["x1", "startX", "fromX"], NaN);
+            const sy = readNum(item, ["y1", "startY", "fromY"], NaN);
+            const ex = readNum(item, ["x2", "endX", "toX"], NaN);
+            const ey = readNum(item, ["y2", "endY", "toY"], NaN);
+
+            if (!nodesOut[fromId]) fromId = getNearestNodeIdByPoint(sx, sy, nodeList);
+            if (!nodesOut[toId]) toId = getNearestNodeIdByPoint(ex, ey, nodeList);
+        }
+
+        if (!fromId || !toId || fromId === toId || !nodesOut[fromId] || !nodesOut[toId]) {
+            return;
+        }
+
+        const fromNode = nodesOut[fromId];
+        const toNode = nodesOut[toId];
+        const fromPort = getPortToward(fromNode, toNode);
+        const toPort = getPortToward(toNode, fromNode);
+
+        lineIdx += 1;
+        linesOut.push({
+            id: readString(item, ["id", "uuid", "key"], `lucid_line_${lineIdx}`),
+            fromId,
+            fromPort,
+            toId,
+            toPort,
+            lineType: "orthogonal",
+            lineStyle: readString(item, ["lineStyle", "style"], "solid"),
+            color: readString(item, ["strokeColor", "color", "lineColor"], "#64748b"),
+            thickness: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "thickness"], 2.5)),
+            hasArrow: readString(item, ["hasArrow", "arrow", "arrowType"], "end")
+        });
+    });
+
+    return {
+        format: "flowcraft",
+        version: "1.0",
+        name: readString(rawData, ["name", "title", "documentName"], "Imported Lucidchart Diagram"),
+        nodes: nodesOut,
+        lines: linesOut
+    };
+}
+
 function exportJsonFile() {
     const exportData = {
         format: "flowcraft",
@@ -1723,17 +1984,22 @@ function importJsonFile(e) {
     reader.onload = function(evt) {
         try {
             const data = JSON.parse(evt.target.result);
-            if (data.format === "flowcraft" && data.nodes) {
-                loadSessionData(data);
+            const normalized = normalizeImportedData(data);
+            if (normalized) {
+                loadSessionData(normalized.data);
                 currentLocalSaveName = "";
                 currentDriveFileId = null;
                 undoStack = [];
                 redoStack = [];
                 saveHistory();
                 centerCanvas();
-                alert("Flowchart imported successfully!");
+                if (normalized.source === "flowcraft") {
+                    alert("Flowchart imported successfully!");
+                } else {
+                    alert("Lucidchart JSON imported successfully (best effort conversion).");
+                }
             } else {
-                alert("Invalid format: missing FlowCraft signature metadata.");
+                alert("Invalid format: expected FlowCraft JSON or a Lucidchart-like export with shapes/nodes.");
             }
         } catch(err) {
             alert("Error parsing file: " + err.message);
@@ -2020,18 +2286,19 @@ async function loadGoogleDriveFile(fileId) {
         
         const data = await response.json();
         
-        if (data.format === "flowcraft") {
+        const normalized = normalizeImportedData(data);
+        if (normalized) {
             currentDriveFileId = fileId;
             currentLocalSaveName = "";
-            loadSessionData(data);
+            loadSessionData(normalized.data);
             undoStack = [];
             redoStack = [];
             saveHistory();
             centerCanvas();
             saveStatus.textContent = "Cloud saved";
-            alert(`Flowchart "${data.name}" successfully loaded from Google Drive!`);
+            alert(`Flowchart "${normalized.data.name}" successfully loaded from Google Drive!`);
         } else {
-            alert("File exists but does not match FlowCraft JSON signature.");
+            alert("File exists but does not match a supported FlowCraft/Lucidchart JSON format.");
             saveStatus.textContent = "Load failed";
         }
     } catch(err) {
