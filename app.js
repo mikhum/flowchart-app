@@ -1975,6 +1975,11 @@ function getParentShapeElement(shapeEl) {
 
 function detectFlowcraftShapeTypeFromVisio(shapeEl) {
     const hint = String(shapeEl?.getAttribute("NameU") || shapeEl?.getAttribute("Name") || "").toLowerCase();
+    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "cloud-shape";
+    if (hint.includes("bpmnactivity")) return "terminator";
+    if (hint.includes("stickiesstickynoteblock") || hint.includes("sticky")) return "document";
+    if (hint.includes("defaultsquareblock")) return "rectangle";
+    if (hint.includes("userimage")) return "rectangle";
     if (hint.includes("decision") || hint.includes("diamond")) return "diamond";
     if (hint.includes("terminator") || hint.includes("start") || hint.includes("end")) return "terminator";
     if (hint.includes("database") || hint.includes("cylinder") || hint.includes("datastore")) return "cylinder";
@@ -2048,7 +2053,8 @@ async function parseVsdxToFlowcraft(file) {
         const pageYOffset = pageIndex * (pageHeightPx + 300);
 
         const allShapes = getDescendantsByLocalName(pageRoot, "Shape");
-        const leafShapes = allShapes.filter(shape => !hasChildShapes(shape));
+        const topLevelShapes = getPageTopLevelShapes(pageRoot);
+        const candidateShapes = topLevelShapes.length ? topLevelShapes : allShapes;
         const shapeParentById = {};
         const shapeById = {};
 
@@ -2075,7 +2081,7 @@ async function parseVsdxToFlowcraft(file) {
             if (isConnector) connectorIds.add(id);
         });
 
-        leafShapes.forEach(shape => {
+        candidateShapes.forEach(shape => {
             const id = String(shape.getAttribute("ID") || "").trim();
             if (!id || nodesOut[id]) return;
 
@@ -2104,7 +2110,8 @@ async function parseVsdxToFlowcraft(file) {
 
             const textEl = getFirstDescendantByLocalName(shape, "Text");
             const text = textEl ? String(textEl.textContent || "").replace(/\s+/g, " ").trim() : "";
-            const nodeType = getFirstDescendantByLocalName(shape, "ForeignData") ? "image" : "shape";
+            const nameHint = String(shape.getAttribute("NameU") || shape.getAttribute("Name") || "").toLowerCase();
+            const nodeType = (getFirstDescendantByLocalName(shape, "ForeignData") || nameHint.includes("userimage")) ? "image" : "shape";
 
             // Ignore tiny helper leaves that are not user-visible symbols.
             if (nodeType === "shape" && width < 20 && height < 20 && !text) return;
