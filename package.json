@@ -1,0 +1,19 @@
+{
+  "name": "google-drive-flowchart-app",
+  "version": "1.0.0",
+  "description": "A premium web-based flowchart app with Google Drive integration, custom shapes, image paste, and Word/PDF export.",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx -y http-server -p 3000 -c-1"
+  },
+  "keywords": [
+    "flowchart",
+    "editor",
+    "google-drive",
+    "oauth",
+    "word-export",
+    "pdf-export"
+  ],
+  "author": "",
+  "license": "ISC"
+}

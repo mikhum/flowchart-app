@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowCraft - Premium Flowchart & Infrastructure Designer</title>
+    <!-- Google Fonts: Outfit and Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for Premium Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- External libraries for exports and captures -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
+    
+    <!-- Google Identity Services client -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar: Library, Google Drive and Files -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fa-solid fa-project-diagram brand-icon"></i>
+                    <h1>FlowCraft</h1>
+                </div>
+                <button class="toggle-sidebar-btn" id="hide-sidebar" title="Hide Sidebar">
+                    <i class="fa-solid fa-chevron-left"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Google Drive Integration & Account Status -->
+                <div class="sidebar-section">
+                    <h3>Google Integration</h3>
+                    <div class="google-auth-container">
+                        <div id="google-sign-in-btn"></div>
+                        <div class="user-profile-card" id="user-profile" style="display: none;">
+                            <img src="" alt="Profile" id="user-avatar" class="user-avatar">
+                            <div class="user-info">
+                                <div class="user-name" id="user-name">Not Signed In</div>
+                                <div class="user-email" id="user-email">domain restricted</div>
+                            </div>
+                            <button class="btn-icon-danger" id="google-sign-out" title="Sign Out">
+                                <i class="fa-solid fa-right-from-bracket"></i>
+                            </button>
+                        </div>
+                        <div class="google-drive-actions" id="gdrive-actions" style="display: none;">
+                            <button class="btn btn-primary" id="btn-save-gdrive">
+                                <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
+                            </button>
+                            <button class="btn btn-outline" id="btn-open-gdrive">
+                                <i class="fa-solid fa-folder-open"></i> Open from Drive
+                            </button>
+                        </div>
+                        <button class="btn btn-outline btn-sm" id="btn-configure-google">
+                            <i class="fa-solid fa-gears"></i> OAuth Credentials
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Shapes & Network Palette -->
+                <div class="sidebar-section">
+                    <h3>Flowchart Library</h3>
+                    <div class="shapes-palette">
+                        <!-- Standard Shapes -->
+                        <div class="palette-group">
+                            <h4>Standard Shapes</h4>
+                            <div class="palette-items">
+                                <div class="palette-item" data-shape="rectangle" title="Process (Rectangle)" draggable="true">
+                                    <div class="shape-icon rect-icon"></div>
+                                    <span>Process</span>
+                                </div>
+                                <div class="palette-item" data-shape="diamond" title="Decision (Diamond)" draggable="true">
+                                    <div class="shape-icon diamond-icon"></div>
+                                    <span>Decision</span>
+                                </div>
+                                <div class="palette-item" data-shape="terminator" title="Terminator (Rounded Rect)" draggable="true">
+                                    <div class="shape-icon rounded-rect-icon"></div>
+                                    <span>Terminator</span>
+                                </div>
+                                <div class="palette-item" data-shape="parallelogram" title="Data (Parallelogram)" draggable="true">
+                                    <div class="shape-icon parallelogram-icon"></div>
+                                    <span>Data (I/O)</span>
+                                </div>
+                                <div class="palette-item" data-shape="cylinder" title="Database (Cylinder)" draggable="true">
+                                    <div class="shape-icon cylinder-icon"></div>
+                                    <span>Database</span>
+                                </div>
+                                <div class="palette-item" data-shape="document" title="Document (Wavy bottom)" draggable="true">
+                                    <div class="shape-icon document-icon"></div>
+                                    <span>Document</span>
+                                </div>
+                                <div class="palette-item" data-shape="hexagon" title="Preparation (Hexagon)" draggable="true">
+                                    <div class="shape-icon hexagon-icon"></div>
+                                    <span>Preparation</span>
+                                </div>
+                                <div class="palette-item" data-shape="circle" title="Connector (Circle)" draggable="true">
+                                    <div class="shape-icon circle-icon"></div>
+                                    <span>Connector</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Network Infrastructure Shapes -->
+                        <div class="palette-group">
+                            <h4>Network Infrastructure</h4>
+                            <div class="palette-items">
+                                <div class="palette-item" data-shape="server" title="Server Rack" draggable="true">
+                                    <i class="fa-solid fa-server net-icon"></i>
+                                    <span>Server</span>
+                                </div>
+                                <div class="palette-item" data-shape="router" title="Router" draggable="true">
+                                    <i class="fa-solid fa-route net-icon"></i>
+                                    <span>Router</span>
+                                </div>
+                                <div class="palette-item" data-shape="switch" title="Network Switch" draggable="true">
+                                    <i class="fa-solid fa-network-wired net-icon"></i>
+                                    <span>Switch</span>
+                                </div>
+                                <div class="palette-item" data-shape="firewall" title="Firewall" draggable="true">
+                                    <i class="fa-solid fa-shield-halved net-icon"></i>
+                                    <span>Firewall</span>
+                                </div>
+                                <div class="palette-item" data-shape="cloud" title="Cloud Network" draggable="true">
+                                    <i class="fa-solid fa-cloud net-icon"></i>
+                                    <span>Cloud</span>
+                                </div>
+                                <div class="palette-item" data-shape="pc" title="Client PC" draggable="true">
+                                    <i class="fa-solid fa-desktop net-icon"></i>
+                                    <span>Workstation</span>
+                                </div>
+                                <div class="palette-item" data-shape="user" title="User / Client" draggable="true">
+                                    <i class="fa-solid fa-user-tie net-icon"></i>
+                                    <span>Client / User</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Local Storage Map Manager -->
+                <div class="sidebar-section">
+                    <h3>Local Workspaces</h3>
+                    <div class="button-group-vertical">
+                        <button class="btn btn-outline" id="btn-new-flowchart">
+                            <i class="fa-solid fa-plus"></i> New Flowchart
+                        </button>
+                        <button class="btn btn-outline" id="btn-save-local">
+                            <i class="fa-solid fa-hdd"></i> Save Locally
+                        </button>
+                    </div>
+                    <div class="saved-maps-list" id="local-files-list">
+                        <div class="empty-state">No local saves.</div>
+                    </div>
+                </div>
+
+                <!-- Export Utilities -->
+                <div class="sidebar-section">
+                    <h3>Export Options</h3>
+                    <div class="button-group-vertical">
+                        <button class="btn btn-secondary" id="btn-export-word">
+                            <i class="fa-solid fa-file-word"></i> Download Word (.docx)
+                        </button>
+                        <button class="btn btn-secondary" id="btn-export-pdf">
+                            <i class="fa-solid fa-file-pdf"></i> Download PDF (.pdf)
+                        </button>
+                        <button class="btn btn-outline" id="btn-export-json">
+                            <i class="fa-solid fa-file-code"></i> Export JSON
+                        </button>
+                        <button class="btn btn-outline" id="btn-import-json">
+                            <i class="fa-solid fa-file-import"></i> Import JSON
+                        </button>
+                        <input type="file" id="file-import-input" accept=".json,.flowchart" style="display: none;">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <div class="theme-info">
+                    <i class="fa-solid fa-circle-question"></i>
+                    <span>Double click text to edit. F2 to edit, Delete to delete.</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Toggle Sidebar Button (shown when sidebar is hidden) -->
+        <button class="show-sidebar-btn" id="show-sidebar" title="Show Sidebar" style="display: none;">
+            <i class="fa-solid fa-bars"></i>
+        </button>
+
+        <!-- Main Workspace -->
+        <main class="workspace-container" id="workspace">
+            <!-- Topbar (Document Title & Tools) -->
+            <header class="topbar">
+                <div class="topbar-title-section">
+                    <span class="doc-title" id="doc-title" contenteditable="true">Untitled Flowchart</span>
+                    <span class="save-status" id="save-status">Saved locally</span>
+                </div>
+                <div class="topbar-actions">
+                    <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
+                    <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
+                    <div class="topbar-divider"></div>
+                    <button class="topbar-btn" id="btn-snap-grid" title="Toggle Snap to Grid"><i class="fa-solid fa-grid-3"></i></button>
+                    <button class="topbar-btn" id="btn-clear-canvas" title="Clear Canvas"><i class="fa-solid fa-trash-can"></i></button>
+                </div>
+            </header>
+
+            <!-- Infinite Canvas viewport -->
+            <div class="canvas" id="canvas">
+                <!-- SVG Canvas for Lines -->
+                <svg class="svg-connector-overlay" id="svg-overlay">
+                    <defs>
+                        <!-- Normal Arrow Marker -->
+                        <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
+                        </marker>
+                        <!-- Selected Arrow Marker -->
+                        <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
+                        </marker>
+                    </defs>
+                </svg>
+                
+                <!-- Container for HTML nodes -->
+                <div class="nodes-container" id="nodes-container"></div>
+            </div>
+
+            <!-- Contextual Properties Panel (Floating Sidebar) -->
+            <div class="properties-panel" id="properties-panel" style="display: none;">
+                <div class="panel-header">
+                    <h4><i class="fa-solid fa-sliders"></i> Element Properties</h4>
+                    <button class="panel-close" id="close-properties">&times;</button>
+                </div>
+                <div class="panel-body">
+                    <!-- Dynamic fields depend on what is selected -->
+                    <div id="prop-node-section" style="display: none;">
+                        <div class="prop-group">
+                            <label>Text Content</label>
+                            <textarea id="prop-text" rows="2"></textarea>
+                        </div>
+                        <div class="prop-group row">
+                            <div>
+                                <label>Text Size (px)</label>
+                                <input type="number" id="prop-text-size" min="10" max="48" value="14">
+                            </div>
+                            <div>
+                                <label>URL Link</label>
+                                <input type="url" id="prop-url" placeholder="https://...">
+                            </div>
+                        </div>
+                        <div class="prop-group">
+                            <label>Background Color</label>
+                            <div class="color-picker-grid" id="prop-bgcolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
+                        </div>
+                        <div class="prop-group">
+                            <label>Border Color</label>
+                            <div class="color-picker-grid" id="prop-bordercolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
+                        </div>
+                        <div class="prop-group row">
+                            <div>
+                                <label>Border Width</label>
+                                <select id="prop-border-width">
+                                    <option value="1">1px (Thin)</option>
+                                    <option value="2">2px (Medium)</option>
+                                    <option value="4">4px (Thick)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Border Style</label>
+                                <select id="prop-border-style">
+                                    <option value="solid">Solid</option>
+                                    <option value="dashed">Dashed</option>
+                                    <option value="dotted">Dotted</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="prop-group">
+                            <label>Layering (Z-Order)</label>
+                            <div class="button-group-row">
+                                <button class="btn btn-outline btn-full btn-sm" id="btn-bring-front" title="Bring to Front">
+                                    <i class="fa-solid fa-layer-group"></i> Bring Front
+                                </button>
+                                <button class="btn btn-outline btn-full btn-sm" id="btn-send-back" title="Send to Back">
+                                    <i class="fa-solid fa-layer-group fa-flip-vertical"></i> Send Back
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="prop-line-section" style="display: none;">
+                        <div class="prop-group">
+                            <label>Line Routing</label>
+                            <select id="prop-line-type">
+                                <option value="orthogonal">Orthogonal (Elbow)</option>
+                                <option value="straight">Straight</option>
+                                <option value="curved">Curved (Bezier)</option>
+                            </select>
+                        </div>
+                        <div class="prop-group">
+                            <label>Line Style</label>
+                            <select id="prop-line-style">
+                                <option value="solid">Solid</option>
+                                <option value="dashed">Dashed</option>
+                                <option value="dotted">Dotted</option>
+                            </select>
+                        </div>
+                        <div class="prop-group row">
+                            <div>
+                                <label>Thickness</label>
+                                <select id="prop-line-width">
+                                    <option value="1.5">1.5px (Thin)</option>
+                                    <option value="3">3px (Medium)</option>
+                                    <option value="5">5px (Thick)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label>Arrows</label>
+                                <select id="prop-line-arrows">
+                                    <option value="end">End Arrow</option>
+                                    <option value="none">No Arrows</option>
+                                    <option value="start">Start Arrow</option>
+                                    <option value="both">Both Arrows</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="prop-group">
+                            <label>Line Color</label>
+                            <div class="color-picker-grid" id="prop-linecolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-danger btn-full" id="btn-delete-selected">
+                        <i class="fa-solid fa-trash-can"></i> Delete Element
+                    </button>
+                </div>
+            </div>
+
+            <!-- Floating Zoom / View Controls -->
+            <div class="floating-controls">
+                <button class="control-btn" id="ctrl-zoom-out" title="Zoom Out (Scroll Down)"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                <span class="zoom-indicator" id="zoom-indicator">100%</span>
+                <button class="control-btn" id="ctrl-zoom-in" title="Zoom In (Scroll Up)"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                <div class="divider"></div>
+                <button class="control-btn" id="ctrl-reset-view" title="Recenter View (Space)"><i class="fa-solid fa-crosshairs"></i></button>
+                <button class="control-btn" id="ctrl-help" title="Keyboard Help"><i class="fa-solid fa-keyboard"></i></button>
+            </div>
+        </main>
+
+        <!-- Google Configuration Modal -->
+        <div class="modal-overlay" id="google-config-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-gears"></i> OAuth Configuration</h2>
+                    <button class="modal-close" id="close-config-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="modal-instruction">To use Google Drive Sync, please enter your Google OAuth 2.0 Client ID. This credentials parameter is saved securely in your local browser storage.</p>
+                    <div class="form-group">
+                        <label for="google-client-id">Google Client ID</label>
+                        <input type="text" id="google-client-id" placeholder="123456789-abc123XYZ.apps.googleusercontent.com" class="form-control">
+                    </div>
+                    <div class="help-text">
+                        <p>Need a client ID? Setup a web application client credential in your <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a> with Authorized Redirect Origin <code>http://localhost:3000</code> or your actual host domain.</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" id="btn-clear-config">Clear</button>
+                    <button class="btn btn-primary" id="btn-save-config">Save Credentials</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Google Drive File Browser Modal -->
+        <div class="modal-overlay" id="gdrive-explorer-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-cloud"></i> Google Drive Explorer</h2>
+                    <button class="modal-close" id="close-gdrive-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="modal-instruction">Select a flowchart document saved on your Google Drive to open:</p>
+                    <div class="gdrive-files-container" id="gdrive-files-container">
+                        <!-- Drive files injected dynamically by JS -->
+                        <div class="empty-state">Loading files...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" id="btn-close-gdrive-explorer">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Keyboard Help Modal -->
+        <div class="modal-overlay" id="help-modal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-keyboard"></i> Keyboard Shortcuts</h2>
+                    <button class="modal-close" id="close-help-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="shortcuts-grid">
+                        <div class="shortcut-item">
+                            <span class="key">Double Click</span>
+                            <span class="action">Edit shape text</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">F2</span>
+                            <span class="action">Edit selected shape text</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Ctrl + V</span>
+                            <span class="action">Paste screenshot/image from clipboard</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Delete</span> / <span class="key">Backspace</span>
+                            <span class="action">Delete selected element (shape or line)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Ctrl + Z</span> / <span class="key">Ctrl + Y</span>
+                            <span class="action">Undo / Redo changes</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Space</span>
+                            <span class="action">Reset pan and zoom to center</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Scroll Wheel</span>
+                            <span class="action">Zoom in / out of canvas</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="key">Drag Background</span>
+                            <span class="action">Pan the flowchart viewport</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btn-close-help">Got it</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Core App JS -->
+    <script src="app.js"></script>
+</body>
+</html>
