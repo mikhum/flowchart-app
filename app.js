@@ -1,4 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
+const APP_BUILD = "2026-06-30-vsdx-domparser-2";
 
 // --- Application State ---
 let nodes = {};
@@ -139,6 +140,7 @@ const btnDeleteSelected = document.getElementById("btn-delete-selected");
 
 // --- Initialization ---
 function init() {
+    console.info("FlowCraft build:", APP_BUILD);
     setupEventListeners();
     setupColorPickers();
     loadLocalFilesList();
@@ -2370,7 +2372,7 @@ async function importJsonFile(e) {
             alert("VSDX imported successfully (best effort conversion).");
         }
     } catch (err) {
-        alert("Error parsing file: " + err.message);
+        alert("Error parsing file: " + err.message + " | build=" + APP_BUILD);
     } finally {
         fileImportInput.value = "";
     }
