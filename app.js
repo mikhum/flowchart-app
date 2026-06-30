@@ -1945,6 +1945,15 @@ function getDirectChildrenByLocalName(root, name) {
     return out;
 }
 
+function getPageTopLevelShapes(pageRoot) {
+    const directShapesContainers = getDirectChildrenByLocalName(pageRoot, "Shapes");
+    const shapesContainer = directShapesContainers.length
+        ? directShapesContainers[0]
+        : getFirstDescendantByLocalName(pageRoot, "Shapes");
+    if (!shapesContainer) return [];
+    return getDirectChildrenByLocalName(shapesContainer, "Shape");
+}
+
 function getVisioCellValue(containerEl, cellName) {
     if (!containerEl) return undefined;
     const directCells = getDirectChildrenByLocalName(containerEl, "Cell");
@@ -2002,7 +2011,7 @@ async function parseVsdxToFlowcraft(file) {
         const pageWidthPx = pageWidthIn * 96;
         const pageYOffset = pageIndex * (pageHeightPx + 300);
 
-        const flattenedShapes = getDescendantsByLocalName(pageRoot, "Shape");
+        const flattenedShapes = getPageTopLevelShapes(pageRoot);
 
         const connectorIds = new Set();
 
@@ -2022,9 +2031,19 @@ async function parseVsdxToFlowcraft(file) {
             const pinY = parseMaybeNumber(getVisioShapeCellValue(shape, "PinY"), NaN);
             const width = Math.max(60, parseMaybeNumber(getVisioShapeCellValue(shape, "Width"), 1.4) * 96);
             const height = Math.max(30, parseMaybeNumber(getVisioShapeCellValue(shape, "Height"), 0.8) * 96);
+            const locPinX = parseMaybeNumber(getVisioShapeCellValue(shape, "LocPinX"), width / 192) * 96;
+            const locPinY = parseMaybeNumber(getVisioShapeCellValue(shape, "LocPinY"), height / 192) * 96;
 
-            let x = Number.isFinite(pinX) ? pinX * 96 : 0;
-            let y = Number.isFinite(pinY) ? (pageHeightPx - (pinY * 96)) : 0;
+            let x = 0;
+            let y = 0;
+            if (Number.isFinite(pinX)) {
+                // Visio PinX is anchored by LocPinX inside the shape. Convert to center in top-origin space.
+                x = (pinX * 96) - locPinX + (width / 2);
+            }
+            if (Number.isFinite(pinY)) {
+                // Visio Y grows upward; also adjust for LocPinY to align shape center.
+                y = pageHeightPx - ((pinY * 96) - locPinY + (height / 2));
+            }
 
             x = snap(x - pageWidthPx / 2);
             y = snap(y - pageHeightPx / 2 + pageYOffset);
