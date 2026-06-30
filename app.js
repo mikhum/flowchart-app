@@ -947,6 +947,65 @@ function generateShapeSVG(node) {
             
         case "hexagon":
             return `<svg><polygon points="${w*0.18} ${strokeW}, ${w*0.82} ${strokeW}, ${w-strokeW} ${h/2}, ${w*0.82} ${h - strokeW}, ${w*0.18} ${h - strokeW}, ${strokeW} ${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "predefined-process":
+            return `<svg>
+                <rect x="${strokeW/2}" y="${strokeW/2}" width="${w - strokeW}" height="${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" rx="2"/>
+                <line x1="${strokeW * 3 + 12}" y1="0" x2="${strokeW * 3 + 12}" y2="${h}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <line x1="${w - (strokeW * 3 + 12)}" y1="0" x2="${w - (strokeW * 3 + 12)}" y2="${h}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+            </svg>`;
+
+        case "multi-document":
+            const docOffset = 8;
+            return `<svg>
+                <path d="M ${strokeW + docOffset} ${strokeW} L ${w - strokeW} ${strokeW} L ${w - strokeW} ${h - strokeW - docOffset * 2} Q ${(w-docOffset)*0.75} ${h - strokeW - docOffset * 3}, ${(w-docOffset)*0.5} ${h - strokeW - docOffset * 2} T ${strokeW + docOffset} ${h - strokeW - docOffset * 2} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" opacity="0.8"/>
+                <path d="M ${strokeW} ${strokeW + docOffset} L ${w - strokeW - docOffset} ${strokeW + docOffset} L ${w - strokeW - docOffset} ${h - strokeW - docOffset} Q ${(w-docOffset)*0.75} ${h - strokeW - docOffset * 2}, ${(w-docOffset)*0.5} ${h - strokeW - docOffset} T ${strokeW} ${h - strokeW - docOffset} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+            </svg>`;
+
+        case "horizontal-cylinder":
+            const rxCapH = Math.min(12, w * 0.15);
+            return `<svg>
+                <path d="M ${rxCapH} ${strokeW} L ${w - rxCapH} ${strokeW} A ${rxCapH} ${(h-strokeW*2)/2} 0 0 1 ${w - rxCapH} ${h-strokeW} L ${rxCapH} ${h-strokeW} A ${rxCapH} ${(h-strokeW*2)/2} 0 0 1 ${rxCapH} ${strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <ellipse cx="${w - rxCapH}" cy="${h/2}" rx="${rxCapH}" ry="${(h-strokeW*2)/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+            </svg>`;
+
+        case "display":
+            return `<svg><path d="M ${strokeW + 15} ${strokeW} L ${w - 20} ${strokeW} Q ${w-strokeW} ${h/2}, ${w - 20} ${h - strokeW} L ${strokeW + 15} ${h - strokeW} Q ${strokeW} ${h/2}, ${strokeW + 15} ${strokeW} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "summing-junction":
+            return `<svg>
+                <ellipse cx="${w/2}" cy="${h/2}" rx="${(w - strokeW)/2}" ry="${(h - strokeW)/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <line x1="${strokeW}" y1="${h/2}" x2="${w - strokeW}" y2="${h/2}" stroke="${stroke}" stroke-width="${strokeW}"/>
+                <line x1="${w/2}" y1="${strokeW}" x2="${w/2}" y2="${h - strokeW}" stroke="${stroke}" stroke-width="${strokeW}"/>
+            </svg>`;
+
+        case "or-junction":
+            return `<svg>
+                <ellipse cx="${w/2}" cy="${h/2}" rx="${(w - strokeW)/2}" ry="${(h - strokeW)/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <line x1="${w*0.15}" y1="${h*0.15}" x2="${w*0.85}" y2="${h*0.85}" stroke="${stroke}" stroke-width="${strokeW}"/>
+                <line x1="${w*0.85}" y1="${h*0.15}" x2="${w*0.15}" y2="${h*0.85}" stroke="${stroke}" stroke-width="${strokeW}"/>
+            </svg>`;
+
+        case "off-page":
+            return `<svg><polygon points="${strokeW} ${strokeW}, ${w - strokeW} ${strokeW}, ${w - strokeW} ${h*0.6}, ${w/2} ${h - strokeW}, ${strokeW} ${h*0.6}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "triangle":
+            return `<svg><polygon points="${w/2} ${strokeW}, ${w - strokeW} ${h - strokeW}, ${strokeW} ${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "right-triangle":
+            return `<svg><polygon points="${strokeW} ${strokeW}, ${w - strokeW} ${h - strokeW}, ${strokeW} ${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "octagon":
+            return `<svg><polygon points="${w*0.29} ${strokeW}, ${w*0.71} ${strokeW}, ${w-strokeW} ${h*0.29}, ${w-strokeW} ${h*0.71}, ${w*0.71} ${h-strokeW}, ${w*0.29} ${h-strokeW}, ${strokeW} ${h*0.71}, ${strokeW} ${h*0.29}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "cross":
+            return `<svg><polygon points="${w*0.35} ${strokeW}, ${w*0.65} ${strokeW}, ${w*0.65} ${h*0.35}, ${w-strokeW} ${h*0.35}, ${w-strokeW} ${h*0.65}, ${w*0.65} ${h*0.65}, ${w*0.65} ${h-strokeW}, ${w*0.35} ${h-strokeW}, ${w*0.35} ${h*0.65}, ${strokeW} ${h*0.65}, ${strokeW} ${h*0.35}, ${w*0.35} ${h*0.35}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "cloud-shape":
+            return `<svg><path d="M ${w*0.25} ${h*0.3} A ${w*0.13} ${h*0.18} 0 0 1 ${w*0.48} ${h*0.16} A ${w*0.16} ${h*0.22} 0 0 1 ${w*0.78} ${h*0.3} A ${w*0.13} ${h*0.18} 0 0 1 ${w*0.9} ${h*0.55} A ${w*0.13} ${h*0.18} 0 0 1 ${w*0.75} ${h*0.8} Q ${w*0.5} ${h*0.85}, ${w*0.3} ${h*0.75} A ${w*0.13} ${h*0.18} 0 0 1 ${strokeW} ${h*0.5} A ${w*0.13} ${h*0.18} 0 0 1 ${w*0.25} ${h*0.3} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "star":
+            return `<svg><polygon points="${w/2} ${strokeW}, ${w*0.63} ${h*0.38}, ${w-strokeW} ${h*0.38}, ${w*0.7} ${h*0.6}, ${w*0.8} ${h-strokeW}, ${w/2} ${h*0.76}, ${w*0.2} ${h-strokeW}, ${w*0.3} ${h*0.6}, ${strokeW} ${h*0.38}, ${w*0.37} ${h*0.38}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
             
         // Network infrastructure vector cards (styled processes)
         case "server":
