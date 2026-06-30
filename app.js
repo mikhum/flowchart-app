@@ -1960,11 +1960,15 @@ function buildPortByPosition(fromNode, toNode) {
 }
 
 async function parseVsdxToFlowcraft(file) {
-    if (typeof JSZip === "undefined" || typeof XMLParser === "undefined") {
+    const XMLParserCtor = (typeof XMLParser !== "undefined" && XMLParser)
+        || (typeof window !== "undefined" && window.fxparser && window.fxparser.XMLParser)
+        || null;
+
+    if (typeof JSZip === "undefined" || !XMLParserCtor) {
         throw new Error("VSDX libraries not loaded. Refresh the page and try again.");
     }
 
-    const xmlParser = new XMLParser({
+    const xmlParser = new XMLParserCtor({
         ignoreAttributes: false,
         attributeNamePrefix: "@_",
         textNodeName: "#text",
