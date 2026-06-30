@@ -1832,6 +1832,7 @@ function asTextLabel(item, fallback = "") {
 }
 
 function extractNodeGeometry(item, defaultIndex) {
+    let hasSourceGeometry = false;
     const width = Math.max(60, readNum(item, ["width", "w", "boundsWidth", "sizeX", "bounds.width", "size.width", "frame.width", "rect.width"], 140));
     const height = Math.max(30, readNum(item, ["height", "h", "boundsHeight", "sizeY", "bounds.height", "size.height", "frame.height", "rect.height"], 60));
 
@@ -1840,14 +1841,60 @@ function extractNodeGeometry(item, defaultIndex) {
 
     if (!Number.isFinite(x)) {
         const left = readNum(item, ["x", "left", "posX", "boundsX", "bounds.x", "position.x", "frame.x", "rect.x"], NaN);
-        x = Number.isFinite(left) ? left + width / 2 : defaultIndex * 180;
+        if (Number.isFinite(left)) {
+            x = left + width / 2;
+            hasSourceGeometry = true;
+        } else {
+            x = defaultIndex * 180;
+        }
+    } else {
+        hasSourceGeometry = true;
     }
     if (!Number.isFinite(y)) {
         const top = readNum(item, ["y", "top", "posY", "boundsY", "bounds.y", "position.y", "frame.y", "rect.y"], NaN);
-        y = Number.isFinite(top) ? top + height / 2 : 0;
+        if (Number.isFinite(top)) {
+            y = top + height / 2;
+            hasSourceGeometry = true;
+        } else {
+            y = 0;
+        }
+    } else {
+        hasSourceGeometry = true;
     }
 
-    return { x: snap(x), y: snap(y), width: snap(width), height: snap(height) };
+    return { x: snap(x), y: snap(y), width: snap(width), height: snap(height), hasSourceGeometry };
+}
+
+function autoLayoutNodesWhenGeometryMissing(nodesOut, linesOut) {
+    const ids = Object.keys(nodesOut);
+    if (ids.length === 0) return;
+
+    const degree = {};
+    ids.forEach(id => { degree[id] = 0; });
+    (linesOut || []).forEach(line => {
+        if (degree[line.fromId] !== undefined) degree[line.fromId] += 1;
+        if (degree[line.toId] !== undefined) degree[line.toId] += 1;
+    });
+
+    ids.sort((a, b) => {
+        const diff = (degree[b] || 0) - (degree[a] || 0);
+        if (diff !== 0) return diff;
+        return (nodesOut[a].text || "").localeCompare(nodesOut[b].text || "");
+    });
+
+    const columns = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(ids.length))));
+    const rows = Math.ceil(ids.length / columns);
+    const spacingX = 260;
+    const spacingY = 160;
+    const offsetX = ((columns - 1) * spacingX) / 2;
+    const offsetY = ((rows - 1) * spacingY) / 2;
+
+    ids.forEach((id, index) => {
+        const col = index % columns;
+        const row = Math.floor(index / columns);
+        nodesOut[id].x = snap((col * spacingX) - offsetX);
+        nodesOut[id].y = snap((row * spacingY) - offsetY);
+    });
 }
 
 function getNearestNodeIdByPoint(x, y, nodeList) {
@@ -1940,6 +1987,7 @@ function convertLucidchartLikeData(rawData) {
     const nodesOut = {};
     const nodeList = [];
     let fallbackIdx = 0;
+    let nodesWithGeometry = 0;
 
     shapeCandidates.forEach(item => {
         if (!isObject(item)) return;
@@ -1957,10 +2005,12 @@ function convertLucidchartLikeData(rawData) {
         if (nodesOut[id]) return;
 
         const shapeType = normalizeShapeType(readString(item, ["shapeType", "shape", "type", "kind", "class"], "rectangle"));
+        const imageUrl = readString(item, ["image.url"], "");
         const node = {
             id,
-            type: "shape",
+            type: imageUrl ? "image" : "shape",
             shapeType,
+            imageUrl: imageUrl || undefined,
             x: geometry.x,
             y: geometry.y,
             width: geometry.width,
@@ -1974,6 +2024,16 @@ function convertLucidchartLikeData(rawData) {
             borderStyle: readString(item, ["borderStyle", "lineStyle", "style.strokeStyle"], "solid"),
             url: readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], "")
         };
+
+        if (node.type === "image") {
+            node.bgColor = "transparent";
+            node.borderColor = "transparent";
+            node.borderWidth = 0;
+        }
+
+        if (geometry.hasSourceGeometry) {
+            nodesWithGeometry += 1;
+        }
 
         nodesOut[id] = node;
         nodeList.push(node);
@@ -2028,6 +2088,10 @@ function convertLucidchartLikeData(rawData) {
             hasArrow: readString(item, ["hasArrow", "arrow", "arrowType"], "end")
         });
     });
+
+    if (nodesWithGeometry === 0) {
+        autoLayoutNodesWhenGeometryMissing(nodesOut, linesOut);
+    }
 
     return {
         format: "flowcraft",
