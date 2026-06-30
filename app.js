@@ -1774,6 +1774,7 @@ function looksLikeLineItem(item) {
     if (!isObject(item)) return false;
     const typeHint = readString(item, ["type", "kind", "objectType", "class"], "").toLowerCase();
     if (typeHint.includes("line") || typeHint.includes("edge") || typeHint.includes("connector") || typeHint.includes("link")) return true;
+    if (isObject(item.endpoint1) || isObject(item.endpoint2)) return true;
     const hasRefs = !!(
         item.fromId || item.toId || item.sourceId || item.targetId || item.startNodeId || item.endNodeId ||
         item.source || item.target || item.from || item.to || item.nodeA || item.nodeB
@@ -1790,8 +1791,8 @@ function looksLikeNodeItem(item) {
         "bounds.x", "bounds.y", "position.x", "position.y"
     ].some(k => Number.isFinite(readNum(item, [k], NaN)));
     const hasSize = ["width", "height", "w", "h", "bounds.width", "bounds.height", "size.width", "size.height"].some(k => Number.isFinite(readNum(item, [k], NaN)));
-    const hasIdentity = !!readString(item, ["id", "uuid", "key", "name", "label", "text"], "");
-    return hasGeom || hasSize || hasIdentity;
+    const hasShapeHints = !!readString(item, ["class", "shapeType", "shape", "type"], "") || Array.isArray(item.textAreas);
+    return hasGeom || hasSize || hasShapeHints;
 }
 
 function normalizeShapeType(shapeType) {
@@ -1820,6 +1821,12 @@ function normalizeShapeType(shapeType) {
 function asTextLabel(item, fallback = "") {
     const explicit = readString(item, ["text", "label", "name", "title", "value", "text.value", "data.label"], "");
     if (explicit) return explicit;
+    if (Array.isArray(item.textAreas)) {
+        const preferred = item.textAreas.find(t => isObject(t) && String(t.label || "").toLowerCase() === "text" && readString(t, ["text"], "").trim());
+        if (preferred) return readString(preferred, ["text"], fallback);
+        const firstMeaningful = item.textAreas.find(t => isObject(t) && !String(t.label || "").toLowerCase().includes("readonly") && readString(t, ["text"], "").trim());
+        if (firstMeaningful) return readString(firstMeaningful, ["text"], fallback);
+    }
     if (isObject(item.text) && typeof item.text.value === "string") return item.text.value;
     return fallback;
 }
@@ -1898,8 +1905,8 @@ function convertLucidchartLikeData(rawData) {
 
     roots.push(...pages);
 
-    const shapeKeys = ["nodes", "shapes", "objects", "elements", "items", "entities"]; 
-    const lineKeys = ["lines", "connectors", "edges", "links", "connections"]; 
+    const shapeKeys = ["nodes", "shapes", "objects", "elements", "items", "entities", "items.shapes"]; 
+    const lineKeys = ["lines", "connectors", "edges", "links", "connections", "items.lines"]; 
 
     const shapeCandidates = [];
     const lineCandidates = [];
@@ -1936,6 +1943,8 @@ function convertLucidchartLikeData(rawData) {
 
     shapeCandidates.forEach(item => {
         if (!isObject(item)) return;
+
+        if (looksLikeLineItem(item)) return;
 
         const maybeType = readString(item, ["type", "shape", "shapeType", "kind"], "").toLowerCase();
         if (maybeType.includes("line") || maybeType.includes("edge") || maybeType.includes("connector") || maybeType.includes("link")) {
@@ -1980,8 +1989,8 @@ function convertLucidchartLikeData(rawData) {
     lineCandidates.forEach(item => {
         if (!isObject(item)) return;
 
-        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA || getByPath(item, "source.id") || getByPath(item, "start.id");
-        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB || getByPath(item, "target.id") || getByPath(item, "end.id");
+        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA || getByPath(item, "source.id") || getByPath(item, "start.id") || getByPath(item, "endpoint1.connectedTo");
+        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB || getByPath(item, "target.id") || getByPath(item, "end.id") || getByPath(item, "endpoint2.connectedTo");
 
         let fromId = typeof fromRef === "string" ? fromRef : readString(fromRef, ["id", "nodeId", "shapeId"], "");
         let toId = typeof toRef === "string" ? toRef : readString(toRef, ["id", "nodeId", "shapeId"], "");
