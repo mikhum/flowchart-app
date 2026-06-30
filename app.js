@@ -1954,6 +1954,42 @@ function getPageTopLevelShapes(pageRoot) {
     return getDirectChildrenByLocalName(shapesContainer, "Shape");
 }
 
+function getDirectChildShapes(shapeEl) {
+    const shapesContainers = getDirectChildrenByLocalName(shapeEl, "Shapes");
+    if (!shapesContainers.length) return [];
+    return getDirectChildrenByLocalName(shapesContainers[0], "Shape");
+}
+
+function hasChildShapes(shapeEl) {
+    return getDirectChildShapes(shapeEl).length > 0;
+}
+
+function getParentShapeElement(shapeEl) {
+    let curr = shapeEl ? shapeEl.parentElement : null;
+    while (curr) {
+        if (hasLocalName(curr, "Shape")) return curr;
+        curr = curr.parentElement;
+    }
+    return null;
+}
+
+function detectFlowcraftShapeTypeFromVisio(shapeEl) {
+    const hint = String(shapeEl?.getAttribute("NameU") || shapeEl?.getAttribute("Name") || "").toLowerCase();
+    if (hint.includes("decision") || hint.includes("diamond")) return "diamond";
+    if (hint.includes("terminator") || hint.includes("start") || hint.includes("end")) return "terminator";
+    if (hint.includes("database") || hint.includes("cylinder") || hint.includes("datastore")) return "cylinder";
+    if (hint.includes("document")) return "document";
+    if (hint.includes("hexagon") || hint.includes("preparation")) return "hexagon";
+    if (hint.includes("circle") || hint.includes("connector")) return "circle";
+    if (hint.includes("cloud")) return "cloud-shape";
+    if (hint.includes("server")) return "server";
+    if (hint.includes("router")) return "router";
+    if (hint.includes("switch")) return "switch";
+    if (hint.includes("firewall")) return "firewall";
+    if (hint.includes("user") || hint.includes("person")) return "user";
+    return "rectangle";
+}
+
 function getVisioCellValue(containerEl, cellName) {
     if (!containerEl) return undefined;
     const directCells = getDirectChildrenByLocalName(containerEl, "Cell");
@@ -2011,21 +2047,39 @@ async function parseVsdxToFlowcraft(file) {
         const pageWidthPx = pageWidthIn * 96;
         const pageYOffset = pageIndex * (pageHeightPx + 300);
 
-        const flattenedShapes = getPageTopLevelShapes(pageRoot);
+        const allShapes = getDescendantsByLocalName(pageRoot, "Shape");
+        const leafShapes = allShapes.filter(shape => !hasChildShapes(shape));
+        const shapeParentById = {};
+        const shapeById = {};
+
+        allShapes.forEach(shape => {
+            const sid = String(shape.getAttribute("ID") || "").trim();
+            if (!sid) return;
+            shapeById[sid] = shape;
+            const parentShape = getParentShapeElement(shape);
+            if (parentShape) {
+                const parentId = String(parentShape.getAttribute("ID") || "").trim();
+                if (parentId) shapeParentById[sid] = parentId;
+            }
+        });
 
         const connectorIds = new Set();
 
-        flattenedShapes.forEach(shape => {
+        allShapes.forEach(shape => {
             const id = String(shape.getAttribute("ID") || "").trim();
-            if (!id || nodesOut[id]) return;
+            if (!id) return;
 
             const oneD = String(getVisioShapeCellValue(shape, "OneD") || "").trim();
             const nameHint = String(shape.getAttribute("NameU") || shape.getAttribute("Name") || "").toLowerCase();
             const isConnector = oneD === "1" || nameHint.includes("connector") || nameHint.includes("dynamic connector");
-            if (isConnector) {
-                connectorIds.add(id);
-                return;
-            }
+            if (isConnector) connectorIds.add(id);
+        });
+
+        leafShapes.forEach(shape => {
+            const id = String(shape.getAttribute("ID") || "").trim();
+            if (!id || nodesOut[id]) return;
+
+            if (connectorIds.has(id)) return;
 
             const pinX = parseMaybeNumber(getVisioShapeCellValue(shape, "PinX"), NaN);
             const pinY = parseMaybeNumber(getVisioShapeCellValue(shape, "PinY"), NaN);
@@ -2051,10 +2105,14 @@ async function parseVsdxToFlowcraft(file) {
             const textEl = getFirstDescendantByLocalName(shape, "Text");
             const text = textEl ? String(textEl.textContent || "").replace(/\s+/g, " ").trim() : "";
             const nodeType = getFirstDescendantByLocalName(shape, "ForeignData") ? "image" : "shape";
+
+            // Ignore tiny helper leaves that are not user-visible symbols.
+            if (nodeType === "shape" && width < 20 && height < 20 && !text) return;
+
             const node = {
                 id,
                 type: nodeType,
-                shapeType: "rectangle",
+                shapeType: detectFlowcraftShapeTypeFromVisio(shape),
                 x,
                 y,
                 width: snap(width),
@@ -2072,6 +2130,18 @@ async function parseVsdxToFlowcraft(file) {
             nodesOut[id] = node;
         });
 
+        const importedNodeIds = new Set(Object.keys(nodesOut));
+        const resolveNodeId = (rawId) => {
+            let curr = rawId;
+            const visited = new Set();
+            while (curr && !visited.has(curr)) {
+                if (importedNodeIds.has(curr)) return curr;
+                visited.add(curr);
+                curr = shapeParentById[curr];
+            }
+            return null;
+        };
+
         const connects = getDescendantsByLocalName(pageRoot, "Connect");
         const connectorMap = {};
 
@@ -2079,21 +2149,22 @@ async function parseVsdxToFlowcraft(file) {
             const fromSheet = String(conn.getAttribute("FromSheet") || "").trim();
             const toSheet = String(conn.getAttribute("ToSheet") || "").trim();
             const fromCell = String(conn.getAttribute("FromCell") || "").toLowerCase();
+            const resolvedToNodeId = resolveNodeId(toSheet);
 
             if (!fromSheet || !toSheet) return;
             if (!connectorIds.has(fromSheet)) return;
-            if (!nodesOut[toSheet]) return;
+            if (!resolvedToNodeId || !nodesOut[resolvedToNodeId]) return;
 
             if (!connectorMap[fromSheet]) connectorMap[fromSheet] = { fromId: null, toId: null };
 
             if (fromCell.includes("begin")) {
-                connectorMap[fromSheet].fromId = toSheet;
+                connectorMap[fromSheet].fromId = resolvedToNodeId;
             } else if (fromCell.includes("end")) {
-                connectorMap[fromSheet].toId = toSheet;
+                connectorMap[fromSheet].toId = resolvedToNodeId;
             } else if (!connectorMap[fromSheet].fromId) {
-                connectorMap[fromSheet].fromId = toSheet;
+                connectorMap[fromSheet].fromId = resolvedToNodeId;
             } else if (!connectorMap[fromSheet].toId) {
-                connectorMap[fromSheet].toId = toSheet;
+                connectorMap[fromSheet].toId = resolvedToNodeId;
             }
         });
 
