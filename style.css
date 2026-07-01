@@ -876,6 +876,22 @@ body.drawing-line .port {
     left: 0;
 }
 
+/* While a line is selected, disable node ports so line end handles stay clickable. */
+body.line-edit-mode .port {
+    pointer-events: none;
+}
+
+body.line-edit-mode .node:hover .port,
+body.line-edit-mode .node.selected .port {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.8);
+}
+
+body.line-edit-mode .port.snapped {
+    opacity: 1 !important;
+    transform: translate(-50%, -50%) scale(1.3) !important;
+}
+
 /* Selection bounding ring helper (for irregular shapes) */
 .node.selected::after {
     content: '';

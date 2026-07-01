@@ -1349,6 +1349,7 @@ function startTextEdit(nodeId) {
 function selectElement(id, type = null) {
     selectedId = id;
     selectedType = type;
+    document.body.classList.toggle("line-edit-mode", selectedType === "line" && !!selectedId);
     
     // Update visual nodes selected state
     Object.keys(nodes).forEach(nodeId => {
