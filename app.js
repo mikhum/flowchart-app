@@ -708,6 +708,7 @@ function handleCanvasDrop(e) {
 function addNewShapeNode(shapeType, x, y) {
     const id = "node_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     const isNetwork = ["server", "router", "switch", "firewall", "cloud", "pc", "user"].includes(shapeType);
+    const isTextBox = shapeType === "text-box";
     
     nodes[id] = {
         id: id,
@@ -716,13 +717,13 @@ function addNewShapeNode(shapeType, x, y) {
         x: x,
         y: y,
         width: isNetwork ? 80 : 120,
-        height: isNetwork ? 80 : 60,
-        text: isNetwork ? shapeType.charAt(0).toUpperCase() + shapeType.slice(1) : "New Shape",
+        height: isNetwork ? 80 : (isTextBox ? 36 : 60),
+        text: isNetwork ? shapeType.charAt(0).toUpperCase() + shapeType.slice(1) : (isTextBox ? "Text" : "New Shape"),
         textOffset: { x: 0, y: 0 },
         textSize: 14,
-        bgColor: isNetwork ? "transparent" : "#ffffff",
-        borderColor: isNetwork ? "transparent" : "#64748b",
-        borderWidth: isNetwork ? 0 : 2,
+        bgColor: (isNetwork || isTextBox) ? "transparent" : "#ffffff",
+        borderColor: (isNetwork || isTextBox) ? "transparent" : "#64748b",
+        borderWidth: (isNetwork || isTextBox) ? 0 : 2,
         borderStyle: "solid",
         url: ""
     };
@@ -1006,6 +1007,9 @@ function generateShapeSVG(node) {
     
     // Standard shapes representations
     switch (node.shapeType) {
+        case "text-box":
+            return "";
+
         case "rectangle":
             return `<svg><rect x="${strokeW/2}" y="${strokeW/2}" width="${w - strokeW}" height="${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" rx="2"/></svg>`;
             
