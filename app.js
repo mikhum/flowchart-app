@@ -37,6 +37,8 @@ let activePortName = null; // 'top' | 'right' | 'bottom' | 'left'
 let lineDrawingMousePos = null;
 let hoveredPortNodeId = null;
 let hoveredPortName = null;
+let draggingLineEnd = null; // { lineId: string, end: 'from' | 'to' }
+let lineEndSnapTarget = null; // { nodeId: string, portName: string } | null
 
 // Snap to grid
 let snapGridEnabled = true;
@@ -544,11 +546,11 @@ function updateCanvasTransform() {
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
     // Escape properties selection on background click
-    if (selectedId && !e.target.closest(".node") && !e.target.closest(".properties-panel") && !e.target.closest(".topbar") && !e.target.closest(".sidebar") && !e.target.closest(".floating-controls") && !e.target.closest(".connector-line-overlay")) {
+    if (selectedId && !e.target.closest(".node") && !e.target.closest(".properties-panel") && !e.target.closest(".topbar") && !e.target.closest(".sidebar") && !e.target.closest(".floating-controls") && !e.target.closest(".connector-line-overlay") && !e.target.closest(".line-end-handle")) {
         selectElement(null);
     }
     
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal")) {
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle")) {
         return;
     }
     
@@ -633,6 +635,18 @@ function handleGlobalPointerMove(e) {
         // Check for snapping to other ports
         checkPortHoverSnap(coords.x, coords.y);
         renderConnectors();
+    } else if (draggingLineEnd && draggingLineEnd.lineId) {
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        lineDrawingMousePos = coords;
+
+        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
+
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+        if (lineEndSnapTarget) {
+            const portEl = document.querySelector(`#node-${lineEndSnapTarget.nodeId} .port-${lineEndSnapTarget.portName}`);
+            if (portEl) portEl.classList.add("snapped");
+        }
+        renderConnectors();
     }
 }
 
@@ -673,6 +687,25 @@ function handleGlobalPointerUp(e) {
         
         document.body.classList.remove("drawing-line");
         
+        renderConnectors();
+    } else if (draggingLineEnd) {
+        const line = lines.find(l => l.id === draggingLineEnd.lineId);
+        if (line && lineEndSnapTarget) {
+            if (draggingLineEnd.end === "from") {
+                line.fromId = lineEndSnapTarget.nodeId;
+                line.fromPort = lineEndSnapTarget.portName;
+            } else {
+                line.toId = lineEndSnapTarget.nodeId;
+                line.toPort = lineEndSnapTarget.portName;
+            }
+            saveHistory();
+            saveAutosave();
+        }
+
+        draggingLineEnd = null;
+        lineEndSnapTarget = null;
+        lineDrawingMousePos = null;
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
     }
 }
@@ -777,6 +810,27 @@ function checkPortHoverSnap(canvasX, canvasY) {
         hoveredPortNodeId = null;
         hoveredPortName = null;
     }
+}
+
+function findNearestPort(canvasX, canvasY, radius = 24) {
+    let bestSnap = null;
+    let minDistance = radius;
+
+    Object.keys(nodes).forEach(nodeId => {
+        const node = nodes[nodeId];
+        const ports = getPortCoords(nodeId);
+
+        Object.keys(ports).forEach(portName => {
+            const port = ports[portName];
+            const dist = Math.hypot(canvasX - port.x, canvasY - port.y);
+            if (dist < minDistance) {
+                minDistance = dist;
+                bestSnap = { nodeId, portName };
+            }
+        });
+    });
+
+    return bestSnap;
 }
 
 function getPortCoords(nodeId) {
@@ -1119,6 +1173,10 @@ function renderConnectors() {
         path.setAttribute("class", "connector-line" + (selectedId === line.id && selectedType === "line" ? " selected" : ""));
         path.style.stroke = selectedId === line.id && selectedType === "line" ? "var(--accent-primary)" : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
+        path.addEventListener("pointerdown", (e) => {
+            e.stopPropagation();
+            selectElement(line.id, "line");
+        });
         
         if (line.lineStyle === "dashed") path.style.strokeDasharray = "6 4";
         else if (line.lineStyle === "dotted") path.style.strokeDasharray = "2 3";
@@ -1144,6 +1202,34 @@ function renderConnectors() {
             selectElement(line.id, "line");
         });
         svgOverlay.appendChild(overlay);
+
+        if (selectedId === line.id && selectedType === "line") {
+            const fromHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            fromHandle.setAttribute("cx", fromCoords.x);
+            fromHandle.setAttribute("cy", fromCoords.y);
+            fromHandle.setAttribute("r", "6");
+            fromHandle.setAttribute("class", "line-end-handle");
+            fromHandle.addEventListener("pointerdown", (e) => {
+                e.stopPropagation();
+                selectElement(line.id, "line");
+                draggingLineEnd = { lineId: line.id, end: "from" };
+                lineEndSnapTarget = null;
+            });
+            svgOverlay.appendChild(fromHandle);
+
+            const toHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            toHandle.setAttribute("cx", toCoords.x);
+            toHandle.setAttribute("cy", toCoords.y);
+            toHandle.setAttribute("r", "6");
+            toHandle.setAttribute("class", "line-end-handle");
+            toHandle.addEventListener("pointerdown", (e) => {
+                e.stopPropagation();
+                selectElement(line.id, "line");
+                draggingLineEnd = { lineId: line.id, end: "to" };
+                lineEndSnapTarget = null;
+            });
+            svgOverlay.appendChild(toHandle);
+        }
     });
 
     // 2. Draw line preview if currently drawing

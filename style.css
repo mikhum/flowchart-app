@@ -646,6 +646,18 @@ body, html {
     pointer-events: stroke;
 }
 
+.line-end-handle {
+    fill: #ffffff;
+    stroke: var(--accent-primary);
+    stroke-width: 2px;
+    cursor: grab;
+    pointer-events: all;
+}
+
+.line-end-handle:active {
+    cursor: grabbing;
+}
+
 /* HTML Nodes Container */
 .nodes-container {
     position: absolute;
