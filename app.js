@@ -1530,6 +1530,17 @@ function bringToFront() {
         saveHistory();
         saveAutosave();
         render();
+        return;
+    }
+
+    if (selectedType === "line") {
+        const lineIndex = lines.findIndex(l => l.id === selectedId);
+        if (lineIndex === -1 || lineIndex === lines.length - 1) return;
+        const [line] = lines.splice(lineIndex, 1);
+        lines.push(line);
+        saveHistory();
+        saveAutosave();
+        render();
     }
 }
 
@@ -1540,6 +1551,17 @@ function sendToBack() {
             if (n.zIndex && n.zIndex < minZ) minZ = n.zIndex;
         });
         nodes[selectedId].zIndex = minZ - 1;
+        saveHistory();
+        saveAutosave();
+        render();
+        return;
+    }
+
+    if (selectedType === "line") {
+        const lineIndex = lines.findIndex(l => l.id === selectedId);
+        if (lineIndex <= 0) return;
+        const [line] = lines.splice(lineIndex, 1);
+        lines.unshift(line);
         saveHistory();
         saveAutosave();
         render();
@@ -1599,17 +1621,6 @@ function pasteCopiedElement() {
         const sourceLine = copiedElement.payload;
         if (!nodes[sourceLine.fromId] || !nodes[sourceLine.toId]) {
             saveStatus.textContent = "Could not paste line (missing nodes)";
-            return;
-        }
-
-        const alreadyExists = lines.some(l =>
-            l.fromId === sourceLine.fromId &&
-            l.fromPort === sourceLine.fromPort &&
-            l.toId === sourceLine.toId &&
-            l.toPort === sourceLine.toPort
-        );
-        if (alreadyExists) {
-            saveStatus.textContent = "Line already exists";
             return;
         }
 
