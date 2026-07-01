@@ -1209,7 +1209,7 @@ function renderConnectors() {
             const fromHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             fromHandle.setAttribute("cx", fromCoords.x);
             fromHandle.setAttribute("cy", fromCoords.y);
-            fromHandle.setAttribute("r", "6");
+            fromHandle.setAttribute("r", "8");
             fromHandle.setAttribute("class", "line-end-handle");
             fromHandle.addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
@@ -1228,7 +1228,7 @@ function renderConnectors() {
             const toHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             toHandle.setAttribute("cx", toCoords.x);
             toHandle.setAttribute("cy", toCoords.y);
-            toHandle.setAttribute("r", "6");
+            toHandle.setAttribute("r", "8");
             toHandle.setAttribute("class", "line-end-handle");
             toHandle.addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
