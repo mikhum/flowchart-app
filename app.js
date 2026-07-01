@@ -678,9 +678,15 @@ function handleGlobalPointerUp(e) {
 }
 
 // --- Drag & Drop Library Shapes ---
+const LIBRARY_SHAPE_TYPES = new Set([
+    "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
+    "text-box", "sticky-note"
+]);
+
 let libraryDragShapeType = "";
 function handleLibraryDragStart(e) {
     libraryDragShapeType = e.currentTarget.dataset.shape;
+    e.dataTransfer.setData("application/x-flowcraft-shape", libraryDragShapeType);
     e.dataTransfer.setData("text/plain", libraryDragShapeType);
     
     // Create preview cursor ghost
@@ -700,8 +706,8 @@ function handleLibraryDragStart(e) {
 
 function handleCanvasDrop(e) {
     e.preventDefault();
-    const shapeType = e.dataTransfer.getData("text/plain");
-    if (!shapeType) return;
+    const shapeType = e.dataTransfer.getData("application/x-flowcraft-shape") || e.dataTransfer.getData("text/plain");
+    if (!LIBRARY_SHAPE_TYPES.has(shapeType)) return;
     
     const coords = screenToCanvas(e.clientX, e.clientY);
     addNewShapeNode(shapeType, snap(coords.x), snap(coords.y));
@@ -831,6 +837,8 @@ function render() {
             nodeEl = document.createElement("div");
             nodeEl.id = "node-" + id;
             nodeEl.className = "node";
+            nodeEl.setAttribute("draggable", "false");
+            nodeEl.addEventListener("dragstart", (e) => e.preventDefault());
             
             // Port HTML templates
             ["top", "right", "bottom", "left"].forEach(p => {
@@ -921,6 +929,7 @@ function render() {
             if (!imageElement) {
                 imageElement = document.createElement("img");
                 imageElement.className = "node-image-img";
+                imageElement.setAttribute("draggable", "false");
                 nodeEl.appendChild(imageElement);
             }
             imageElement.src = node.imageUrl;
