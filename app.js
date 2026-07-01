@@ -173,6 +173,12 @@ const propTextSize = document.getElementById("prop-text-size");
 const propUrl = document.getElementById("prop-url");
 const propNodeWidth = document.getElementById("prop-node-width");
 const propNodeHeight = document.getElementById("prop-node-height");
+const propImageCropGroup = document.getElementById("prop-image-crop-group");
+const propCropLeft = document.getElementById("prop-crop-left");
+const propCropTop = document.getElementById("prop-crop-top");
+const propCropRight = document.getElementById("prop-crop-right");
+const propCropBottom = document.getElementById("prop-crop-bottom");
+const btnResetCrop = document.getElementById("btn-reset-crop");
 const propBorderWidth = document.getElementById("prop-border-width");
 const propBorderStyle = document.getElementById("prop-border-style");
 const propLineType = document.getElementById("prop-line-type");
@@ -464,6 +470,11 @@ function setupEventListeners() {
     propUrl.addEventListener("input", updateSelectedNodeUrl);
     propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
     propNodeHeight.addEventListener("change", updateSelectedNodeHeight);
+    propCropLeft.addEventListener("input", updateSelectedNodeCrop);
+    propCropTop.addEventListener("input", updateSelectedNodeCrop);
+    propCropRight.addEventListener("input", updateSelectedNodeCrop);
+    propCropBottom.addEventListener("input", updateSelectedNodeCrop);
+    btnResetCrop.addEventListener("click", resetSelectedNodeCrop);
     propBorderWidth.addEventListener("change", updateSelectedNodeBorderWidth);
     propBorderStyle.addEventListener("change", updateSelectedNodeBorderStyle);
     
@@ -910,6 +921,22 @@ function render() {
                 nodeEl.appendChild(imageElement);
             }
             imageElement.src = node.imageUrl;
+
+            const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+            const left = Math.max(0, Math.min(0.9, Number(crop.left) || 0));
+            const top = Math.max(0, Math.min(0.9, Number(crop.top) || 0));
+            const right = Math.max(0, Math.min(0.9, Number(crop.right) || 0));
+            const bottom = Math.max(0, Math.min(0.9, Number(crop.bottom) || 0));
+            const visW = Math.max(0.05, 1 - left - right);
+            const visH = Math.max(0.05, 1 - top - bottom);
+
+            imageElement.style.position = "absolute";
+            imageElement.style.width = `${100 / visW}%`;
+            imageElement.style.height = `${100 / visH}%`;
+            imageElement.style.left = `${-(left / visW) * 100}%`;
+            imageElement.style.top = `${-(top / visH) * 100}%`;
+            imageElement.style.objectFit = "fill";
+            nodeEl.style.overflow = "hidden";
         } else {
             if (imageElement) imageElement.remove();
             if (!svgWrapper) {
@@ -1317,6 +1344,12 @@ function updatePropertiesPanel() {
         propUrl.value = node.url || "";
         propNodeWidth.value = Math.round(node.width || 120);
         propNodeHeight.value = Math.round(node.height || 60);
+        const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+        propCropLeft.value = Math.round((crop.left || 0) * 100);
+        propCropTop.value = Math.round((crop.top || 0) * 100);
+        propCropRight.value = Math.round((crop.right || 0) * 100);
+        propCropBottom.value = Math.round((crop.bottom || 0) * 100);
+        propImageCropGroup.style.display = node.type === "image" ? "block" : "none";
         propBorderWidth.value = node.borderWidth;
         propBorderStyle.value = node.borderStyle;
         
@@ -1381,6 +1414,42 @@ function updateSelectedNodeHeight() {
     if (selectedType === "node" && nodes[selectedId]) {
         const height = Math.max(30, parseInt(propNodeHeight.value, 10) || nodes[selectedId].height || 60);
         nodes[selectedId].height = snap(height);
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedNodeCrop() {
+    if (selectedType === "node" && nodes[selectedId] && nodes[selectedId].type === "image") {
+        const left = Math.max(0, Math.min(90, parseInt(propCropLeft.value, 10) || 0)) / 100;
+        const top = Math.max(0, Math.min(90, parseInt(propCropTop.value, 10) || 0)) / 100;
+        const right = Math.max(0, Math.min(90, parseInt(propCropRight.value, 10) || 0)) / 100;
+        const bottom = Math.max(0, Math.min(90, parseInt(propCropBottom.value, 10) || 0)) / 100;
+
+        const maxLR = Math.max(0, 0.95 - right);
+        const safeLeft = Math.min(left, maxLR);
+        const maxTB = Math.max(0, 0.95 - bottom);
+        const safeTop = Math.min(top, maxTB);
+
+        nodes[selectedId].crop = {
+            left: safeLeft,
+            top: safeTop,
+            right,
+            bottom
+        };
+
+        saveHistory();
+        render();
+    }
+}
+
+function resetSelectedNodeCrop() {
+    if (selectedType === "node" && nodes[selectedId] && nodes[selectedId].type === "image") {
+        nodes[selectedId].crop = { left: 0, top: 0, right: 0, bottom: 0 };
+        propCropLeft.value = "0";
+        propCropTop.value = "0";
+        propCropRight.value = "0";
+        propCropBottom.value = "0";
         saveHistory();
         render();
     }
@@ -1643,6 +1712,7 @@ function addNewImageNode(base64, naturalWidth = 0, naturalHeight = 0) {
         y: snap(center.y),
         width: snap(width),
         height: snap(height),
+        crop: { left: 0, top: 0, right: 0, bottom: 0 },
         text: "",
         textOffset: { x: 0, y: 0 },
         bgColor: "transparent",

@@ -339,6 +339,34 @@
                                 <input type="number" id="prop-node-height" min="30" max="4000" value="60">
                             </div>
                         </div>
+                        <div class="prop-group" id="prop-image-crop-group" style="display: none;">
+                            <label>Image Crop (%)</label>
+                            <div class="prop-group row" style="margin-top: 6px;">
+                                <div>
+                                    <label>Left</label>
+                                    <input type="number" id="prop-crop-left" min="0" max="90" step="1" value="0">
+                                </div>
+                                <div>
+                                    <label>Top</label>
+                                    <input type="number" id="prop-crop-top" min="0" max="90" step="1" value="0">
+                                </div>
+                            </div>
+                            <div class="prop-group row" style="margin-top: 6px;">
+                                <div>
+                                    <label>Right</label>
+                                    <input type="number" id="prop-crop-right" min="0" max="90" step="1" value="0">
+                                </div>
+                                <div>
+                                    <label>Bottom</label>
+                                    <input type="number" id="prop-crop-bottom" min="0" max="90" step="1" value="0">
+                                </div>
+                            </div>
+                            <div class="prop-group" style="margin-top: 8px;">
+                                <button class="btn btn-outline btn-full btn-sm" id="btn-reset-crop">
+                                    <i class="fa-solid fa-crop-simple"></i> Reset Crop
+                                </button>
+                            </div>
+                        </div>
                         <div class="prop-group">
                             <label>Background Color</label>
                             <div class="color-picker-grid" id="prop-bgcolor-grid">
