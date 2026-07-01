@@ -17,6 +17,8 @@ let viewportTransform = { x: 0, y: 0, scale: 1 };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let panOffset = { x: 0, y: 0 };
+let panPointerButton = null;
+let panMoved = false;
 let isMarqueeSelecting = false;
 let marqueeStartMouse = { x: 0, y: 0 };
 let marqueeStartCanvas = { x: 0, y: 0 };
@@ -397,6 +399,7 @@ function selectLineColor(color) {
 function setupEventListeners() {
     // Zooming (Wheel)
     workspace.addEventListener("wheel", handleWheel, { passive: false });
+    workspace.addEventListener("contextmenu", handleWorkspaceContextMenu);
 
     // Workspace Panning & Click Off
     workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
@@ -637,13 +640,15 @@ function updateMarqueeSelection() {
 
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-end-hit-target") || e.target.closest(".line-handles-layer")) {
-        return;
-    }
-
-    // Keep panning available with middle mouse button.
-    if (e.button === 1) {
+    const isPanButton = e.button === 1 || e.button === 2;
+    if (isPanButton) {
+        if (e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".topbar")) {
+            return;
+        }
+        e.preventDefault();
         isPanning = true;
+        panPointerButton = e.button;
+        panMoved = false;
         canvas.classList.add("grabbing");
         panStart = { x: e.clientX, y: e.clientY };
         panOffset = { x: viewportTransform.x, y: viewportTransform.y };
@@ -652,6 +657,10 @@ function handleWorkspacePointerDown(e) {
     }
 
     if (e.button !== 0) return;
+
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-end-hit-target") || e.target.closest(".line-handles-layer")) {
+        return;
+    }
 
     marqueeAdditive = e.ctrlKey || e.metaKey || e.shiftKey;
     marqueeBaseSelection = marqueeAdditive ? new Set(selectedNodeIds) : new Set();
@@ -665,12 +674,21 @@ function handleWorkspacePointerDown(e) {
     workspace.setPointerCapture(e.pointerId);
 }
 
+function handleWorkspaceContextMenu(e) {
+    if (e.target.closest(".canvas") || e.target.closest(".node") || e.target.closest(".svg-connector-overlay") || e.target.closest(".line-handles-layer")) {
+        e.preventDefault();
+    }
+}
+
 function handleGlobalPointerMove(e) {
     if (isPanning) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
         viewportTransform.x = panOffset.x + dx;
         viewportTransform.y = panOffset.y + dy;
+        if (!panMoved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+            panMoved = true;
+        }
         updateCanvasTransform();
     } else if (isMarqueeSelecting) {
         marqueeCurrentCanvas = screenToCanvas(e.clientX, e.clientY);
@@ -777,6 +795,8 @@ function handleGlobalPointerMove(e) {
 function handleGlobalPointerUp(e) {
     if (isPanning) {
         isPanning = false;
+        panPointerButton = null;
+        panMoved = false;
         canvas.classList.remove("grabbing");
         try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
     } else if (isMarqueeSelecting) {
@@ -1044,6 +1064,7 @@ function render() {
                 const portEl = document.createElement("div");
                 portEl.className = `port port-${p}`;
                 portEl.addEventListener("pointerdown", (e) => {
+                    if (e.button !== 0) return;
                     e.stopPropagation();
                     e.preventDefault(); // Prevent text selection and browser drag-cancellation
                     activePortNodeId = id;
@@ -1064,6 +1085,7 @@ function render() {
             
             // Drag handle to move text offset
             textContainer.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
                 if (selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(id)) {
                     e.stopPropagation();
                     draggingTextNodeId = id;
@@ -1083,6 +1105,7 @@ function render() {
             
             // Pointer Down for Selection & Dragging Shape
             nodeEl.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
                 if (e.target.classList.contains("port") || e.target.classList.contains("resize-handle")) return;
                 if (draggingLineEnd || document.body.classList.contains("line-end-dragging")) return;
                 e.stopPropagation();
@@ -1112,6 +1135,7 @@ function render() {
             const resizeHandle = document.createElement("div");
             resizeHandle.className = "resize-handle";
             resizeHandle.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
                 e.stopPropagation();
                 resizingNodeId = id;
                 resizeStartMouse = { x: e.clientX, y: e.clientY };
@@ -1335,6 +1359,7 @@ function renderConnectors() {
         path.style.stroke = selectedId === line.id && selectedType === "line" ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
@@ -1359,6 +1384,7 @@ function renderConnectors() {
         overlay.setAttribute("d", pathD);
         overlay.setAttribute("class", "connector-line-overlay");
         overlay.addEventListener("pointerdown", (e) => {
+            if (e.button !== 0) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
