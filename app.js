@@ -8,6 +8,8 @@ let lines = [];
 // Selection states
 let selectedId = null; 
 let selectedType = null; // 'node' | 'line'
+let copiedElement = null; // { type: 'node' | 'line', payload: object }
+let pasteSerial = 0;
 
 // Camera Viewport Panning and Zooming
 let viewportTransform = { x: 0, y: 0, scale: 1 };
@@ -1549,12 +1551,95 @@ function sendToBack() {
     }
 }
 
+function copySelectedElement() {
+    if (!selectedId || !selectedType) return;
+
+    if (selectedType === "node" && nodes[selectedId]) {
+        copiedElement = {
+            type: "node",
+            payload: JSON.parse(JSON.stringify(nodes[selectedId]))
+        };
+        pasteSerial = 0;
+        saveStatus.textContent = "Node copied";
+        return;
+    }
+
+    if (selectedType === "line") {
+        const line = lines.find(l => l.id === selectedId);
+        if (!line) return;
+        copiedElement = {
+            type: "line",
+            payload: JSON.parse(JSON.stringify(line))
+        };
+        pasteSerial = 0;
+        saveStatus.textContent = "Line copied";
+    }
+}
+
+function pasteCopiedElement() {
+    if (!copiedElement || !copiedElement.type || !copiedElement.payload) return;
+
+    pasteSerial += 1;
+    const offset = GRID_SIZE * pasteSerial;
+
+    if (copiedElement.type === "node") {
+        const sourceNode = copiedElement.payload;
+        const newIdPrefix = sourceNode.type === "image" ? "img_" : "node_";
+        const newId = `${newIdPrefix}${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const cloned = JSON.parse(JSON.stringify(sourceNode));
+        cloned.id = newId;
+        cloned.x = snap((Number(sourceNode.x) || 0) + offset);
+        cloned.y = snap((Number(sourceNode.y) || 0) + offset);
+        nodes[newId] = cloned;
+
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(newId, "node");
+        saveStatus.textContent = "Node pasted";
+        return;
+    }
+
+    if (copiedElement.type === "line") {
+        const sourceLine = copiedElement.payload;
+        if (!nodes[sourceLine.fromId] || !nodes[sourceLine.toId]) {
+            saveStatus.textContent = "Could not paste line (missing nodes)";
+            return;
+        }
+
+        const alreadyExists = lines.some(l =>
+            l.fromId === sourceLine.fromId &&
+            l.fromPort === sourceLine.fromPort &&
+            l.toId === sourceLine.toId &&
+            l.toPort === sourceLine.toPort
+        );
+        if (alreadyExists) {
+            saveStatus.textContent = "Line already exists";
+            return;
+        }
+
+        const newLineId = `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        lines.push({
+            ...JSON.parse(JSON.stringify(sourceLine)),
+            id: newLineId
+        });
+
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(newLineId, "line");
+        saveStatus.textContent = "Line pasted";
+    }
+}
+
 // --- Keyboard Handling ---
 function handleKeyDown(e) {
     // Disable shortcuts if writing text or in modals
     if (editingNodeId || document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.contentEditable === "true") {
         return;
     }
+
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
     
     // Delete key
     if (e.key === "Delete" || e.key === "Backspace") {
@@ -1567,15 +1652,31 @@ function handleKeyDown(e) {
         e.preventDefault();
         startTextEdit(selectedId);
     }
+
+    // Ctrl/Cmd + C -> Copy selected object
+    if (isCtrlOrCmd && (e.key === "c" || e.key === "C")) {
+        if (selectedId && selectedType) {
+            e.preventDefault();
+            copySelectedElement();
+        }
+    }
+
+    // Ctrl/Cmd + V -> Paste copied object
+    if (isCtrlOrCmd && (e.key === "v" || e.key === "V")) {
+        if (copiedElement) {
+            e.preventDefault();
+            pasteCopiedElement();
+        }
+    }
     
     // Ctrl + Z -> Undo
-    if (e.ctrlKey && (e.key === "z" || e.key === "Z")) {
+    if (isCtrlOrCmd && (e.key === "z" || e.key === "Z")) {
         e.preventDefault();
         undo();
     }
     
     // Ctrl + Y -> Redo
-    if (e.ctrlKey && (e.key === "y" || e.key === "Y")) {
+    if (isCtrlOrCmd && (e.key === "y" || e.key === "Y")) {
         e.preventDefault();
         redo();
     }
