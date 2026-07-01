@@ -152,6 +152,7 @@ const closeHelpModal = document.getElementById("close-help-modal");
 
 const googleConfigModal = document.getElementById("google-config-modal");
 const btnConfigureGoogle = document.getElementById("btn-configure-google");
+const btnGoogleSignIn = document.getElementById("btn-google-sign-in");
 const closeConfigModal = document.getElementById("close-config-modal");
 const btnSaveConfig = document.getElementById("btn-save-config");
 const btnClearConfig = document.getElementById("btn-clear-config");
@@ -444,6 +445,7 @@ function setupEventListeners() {
     btnCloseHelp.addEventListener("click", () => showHelpModal(false));
     
     btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
+    btnGoogleSignIn.addEventListener("click", startGoogleSignIn);
     closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
     btnSaveConfig.addEventListener("click", saveGoogleConfig);
     btnClearConfig.addEventListener("click", clearGoogleConfig);
@@ -2572,6 +2574,23 @@ function clearGoogleConfig() {
     showGoogleConfigModal(false);
     alert("Google credentials cleared. Please configure again to use Google Drive.");
     signOutGoogle();
+}
+
+function startGoogleSignIn() {
+    if (!googleClientId) {
+        alert("Börja med att ange Google OAuth Client ID under OAuth Credentials.");
+        showGoogleConfigModal(true);
+        return;
+    }
+
+    if (typeof google === "undefined" || !google.accounts || !google.accounts.id) {
+        alert("Google Identity Services kunde inte laddas. Ladda om sidan och försök igen.");
+        return;
+    }
+
+    initGoogleClient();
+    document.getElementById("google-sign-in-btn").style.display = "block";
+    google.accounts.id.prompt();
 }
 
 // Initialize the Google OAuth & GIS sign-in button
