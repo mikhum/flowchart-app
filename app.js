@@ -709,6 +709,7 @@ function addNewShapeNode(shapeType, x, y) {
     const id = "node_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     const isNetwork = ["server", "router", "switch", "firewall", "cloud", "pc", "user"].includes(shapeType);
     const isTextBox = shapeType === "text-box";
+    const isStickyNote = shapeType === "sticky-note";
     
     nodes[id] = {
         id: id,
@@ -717,13 +718,13 @@ function addNewShapeNode(shapeType, x, y) {
         x: x,
         y: y,
         width: isNetwork ? 80 : 120,
-        height: isNetwork ? 80 : (isTextBox ? 36 : 60),
-        text: isNetwork ? shapeType.charAt(0).toUpperCase() + shapeType.slice(1) : (isTextBox ? "Text" : "New Shape"),
+        height: isNetwork ? 80 : (isTextBox ? 36 : (isStickyNote ? 90 : 60)),
+        text: isNetwork ? shapeType.charAt(0).toUpperCase() + shapeType.slice(1) : (isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape")),
         textOffset: { x: 0, y: 0 },
         textSize: 14,
-        bgColor: (isNetwork || isTextBox) ? "transparent" : "#ffffff",
-        borderColor: (isNetwork || isTextBox) ? "transparent" : "#64748b",
-        borderWidth: (isNetwork || isTextBox) ? 0 : 2,
+        bgColor: isNetwork ? "transparent" : (isTextBox ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff")),
+        borderColor: isNetwork ? "transparent" : (isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b")),
+        borderWidth: (isNetwork || isTextBox) ? 0 : (isStickyNote ? 1 : 2),
         borderStyle: "solid",
         url: ""
     };
@@ -1009,6 +1010,13 @@ function generateShapeSVG(node) {
     switch (node.shapeType) {
         case "text-box":
             return "";
+
+        case "sticky-note":
+            const foldSize = Math.min(w, h) * 0.2;
+            return `<svg>
+                <path d="M ${strokeW/2} ${strokeW/2} L ${w - foldSize - strokeW/2} ${strokeW/2} L ${w - strokeW/2} ${foldSize + strokeW/2} L ${w - strokeW/2} ${h - strokeW/2} L ${strokeW/2} ${h - strokeW/2} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <path d="M ${w - foldSize - strokeW/2} ${strokeW/2} L ${w - foldSize - strokeW/2} ${foldSize + strokeW/2} L ${w - strokeW/2} ${foldSize + strokeW/2} Z" fill="#fef9c3" stroke="${stroke}" stroke-width="${strokeW}"/>
+            </svg>`;
 
         case "rectangle":
             return `<svg><rect x="${strokeW/2}" y="${strokeW/2}" width="${w - strokeW}" height="${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" rx="2"/></svg>`;
