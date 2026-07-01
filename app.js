@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "2026-07-01-pdf-export-rewrite-1";
+const APP_BUILD = "2026-07-01-pdf-canvas-renderer-1";
 
 // --- Application State ---
 let nodes = {};
@@ -1305,39 +1305,46 @@ function getPortVectorOffset(portName, offset) {
     }
 }
 
-// Clean right-angle elbow routing
-function getOrthogonalPath(x1, y1, port1, x2, y2, port2) {
+function getOrthogonalPolyline(x1, y1, port1, x2, y2, port2) {
     const buffer = 24;
-    
-    // start direction vector offsets
+
     const startOffset = getPortVectorOffset(port1, buffer);
     const endOffset = getPortVectorOffset(port2, buffer);
-    
+
     const px1 = x1 + startOffset.x;
     const py1 = y1 + startOffset.y;
     const px2 = x2 + endOffset.x;
     const py2 = y2 + endOffset.y;
-    
-    let path = `M ${x1} ${y1} L ${px1} ${py1} `;
-    
+
+    const points = [
+        { x: x1, y: y1 },
+        { x: px1, y: py1 }
+    ];
+
     if (port1 === "left" || port1 === "right") {
         if (port2 === "left" || port2 === "right") {
             const midX = (px1 + px2) / 2;
-            path += `L ${midX} ${py1} L ${midX} ${py2} L ${px2} ${py2}`;
+            points.push({ x: midX, y: py1 }, { x: midX, y: py2 }, { x: px2, y: py2 });
         } else {
-            path += `L ${px2} ${py1} L ${px2} ${py2}`;
+            points.push({ x: px2, y: py1 }, { x: px2, y: py2 });
         }
-    } else { // top or bottom
+    } else {
         if (port2 === "top" || port2 === "bottom") {
             const midY = (py1 + py2) / 2;
-            path += `L ${px1} ${midY} L ${px2} ${midY} L ${px2} ${py2}`;
+            points.push({ x: px1, y: midY }, { x: px2, y: midY }, { x: px2, y: py2 });
         } else {
-            path += `L ${px1} ${py2} L ${px2} ${py2}`;
+            points.push({ x: px1, y: py2 }, { x: px2, y: py2 });
         }
     }
-    
-    path += ` L ${x2} ${y2}`;
-    return path;
+
+    points.push({ x: x2, y: y2 });
+    return points;
+}
+
+// Clean right-angle elbow routing
+function getOrthogonalPath(x1, y1, port1, x2, y2, port2) {
+    const points = getOrthogonalPolyline(x1, y1, port1, x2, y2, port2);
+    return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
 }
 
 // --- Text Inline Editing ---
@@ -3166,27 +3173,239 @@ function showHelpModal(show) {
 
 // --- Image Captures & Document Exports ---
 
-// Utility to render the flowchart canvas into a single PNG image URL
+function getNodeTextColor(node) {
+    if (node.bgColor === "transparent") return resolveCssColorVar("--text-main", "#0f172a");
+    const isDark = ["#334155", "#0f172a", "#4f46e5", "#0ea5e9", "#ef4444", "#8b5cf6"].includes((node.bgColor || "").toLowerCase());
+    return isDark ? "#ffffff" : resolveCssColorVar("--text-main", "#0f172a");
+}
+
+function setDashedStroke(ctx, style) {
+    if (style === "dashed") ctx.setLineDash([6, 4]);
+    else if (style === "dotted") ctx.setLineDash([2, 3]);
+    else ctx.setLineDash([]);
+}
+
+function addRoundedRectPath(ctx, x, y, w, h, r) {
+    const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+}
+
+function drawArrowHead(ctx, tipX, tipY, dirX, dirY, color, size = 10) {
+    const len = Math.hypot(dirX, dirY) || 1;
+    const ux = dirX / len;
+    const uy = dirY / len;
+    const baseX = tipX - ux * size;
+    const baseY = tipY - uy * size;
+    const nx = -uy;
+    const ny = ux;
+    const wing = size * 0.45;
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + nx * wing, baseY + ny * wing);
+    ctx.lineTo(baseX - nx * wing, baseY - ny * wing);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
+    const halfStroke = strokeW / 2;
+    const left = x + halfStroke;
+    const top = y + halfStroke;
+    const width = Math.max(1, w - strokeW);
+    const height = Math.max(1, h - strokeW);
+
+    switch (node.shapeType) {
+        case "rectangle":
+            addRoundedRectPath(ctx, left, top, width, height, 2);
+            break;
+        case "terminator":
+            addRoundedRectPath(ctx, left, top, width, height, height / 2);
+            break;
+        case "circle":
+            ctx.beginPath();
+            ctx.ellipse(x + w / 2, y + h / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+            ctx.closePath();
+            break;
+        case "diamond":
+            ctx.beginPath();
+            ctx.moveTo(x + w / 2, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h / 2);
+            ctx.lineTo(x + w / 2, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h / 2);
+            ctx.closePath();
+            break;
+        case "parallelogram":
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.15, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + strokeW);
+            ctx.lineTo(x + w * 0.85, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h - strokeW);
+            ctx.closePath();
+            break;
+        case "cylinder": {
+            const ryCap = Math.min(12, h * 0.15);
+            const rxCap = (w - strokeW * 2) / 2;
+            const cx = x + w / 2;
+            const topY = y + ryCap;
+            const bottomY = y + h - ryCap;
+            ctx.beginPath();
+            ctx.ellipse(cx, topY, rxCap, ryCap, 0, Math.PI, 0, true);
+            ctx.lineTo(x + w - strokeW, bottomY);
+            ctx.ellipse(cx, bottomY, rxCap, ryCap, 0, 0, Math.PI, true);
+            ctx.lineTo(x + strokeW, topY);
+            ctx.closePath();
+            break;
+        }
+        case "document": {
+            const waveH = Math.min(15, h * 0.15);
+            ctx.beginPath();
+            ctx.moveTo(x + strokeW, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h - waveH);
+            ctx.quadraticCurveTo(x + w * 0.75, y + h - waveH * 2, x + w * 0.5, y + h - waveH);
+            ctx.quadraticCurveTo(x + w * 0.25, y + h, x + strokeW, y + h - waveH);
+            ctx.closePath();
+            break;
+        }
+        case "hexagon":
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.18, y + strokeW);
+            ctx.lineTo(x + w * 0.82, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h / 2);
+            ctx.lineTo(x + w * 0.82, y + h - strokeW);
+            ctx.lineTo(x + w * 0.18, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h / 2);
+            ctx.closePath();
+            break;
+        case "sticky-note":
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.closePath();
+            break;
+        default:
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.closePath();
+            break;
+    }
+}
+
+function drawNodeLabel(ctx, node, x, y, w, h) {
+    if (node.type === "image") return;
+    const linesText = String(node.text || "").split("\n");
+    const textSize = Number(node.textSize) || 14;
+    const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
+    const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
+    const lineHeight = textSize * 1.25;
+    const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
+    const startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8 + offsetY;
+
+    ctx.fillStyle = getNodeTextColor(node);
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.font = `${textSize}px Inter, Arial, sans-serif`;
+
+    linesText.forEach((line, index) => {
+        ctx.fillText(line, x + w / 2 + offsetX, startY + index * lineHeight);
+    });
+}
+
+function drawLineOnCanvas(ctx, line) {
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    if (!fromNode || !toNode) return;
+
+    const fromCoords = getPortCoords(line.fromId)[line.fromPort];
+    const toCoords = getPortCoords(line.toId)[line.toPort];
+    if (!fromCoords || !toCoords) return;
+
+    const color = line.color || "#64748b";
+    const thickness = Number(line.thickness) || 2.5;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    setDashedStroke(ctx, line.lineStyle);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    let startDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
+    let endDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
+
+    if (line.lineType === "curved") {
+        const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+        const ctrlOffset = Math.min(120, distance * 0.4);
+        const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+        const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+        const c1x = fromCoords.x + ctrl1.x;
+        const c1y = fromCoords.y + ctrl1.y;
+        const c2x = toCoords.x + ctrl2.x;
+        const c2y = toCoords.y + ctrl2.y;
+
+        ctx.beginPath();
+        ctx.moveTo(fromCoords.x, fromCoords.y);
+        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, toCoords.x, toCoords.y);
+        ctx.stroke();
+
+        startDir = { x: c1x - fromCoords.x, y: c1y - fromCoords.y };
+        endDir = { x: toCoords.x - c2x, y: toCoords.y - c2y };
+    } else if (line.lineType === "straight") {
+        ctx.beginPath();
+        ctx.moveTo(fromCoords.x, fromCoords.y);
+        ctx.lineTo(toCoords.x, toCoords.y);
+        ctx.stroke();
+    } else {
+        const points = getOrthogonalPolyline(fromCoords.x, fromCoords.y, line.fromPort, toCoords.x, toCoords.y, line.toPort);
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.stroke();
+
+        startDir = { x: points[1].x - points[0].x, y: points[1].y - points[0].y };
+        const n = points.length;
+        endDir = { x: points[n - 1].x - points[n - 2].x, y: points[n - 1].y - points[n - 2].y };
+    }
+
+    if (line.hasArrow === "end" || line.hasArrow === "both") {
+        drawArrowHead(ctx, toCoords.x, toCoords.y, endDir.x, endDir.y, color, Math.max(8, thickness * 3.5));
+    }
+    if (line.hasArrow === "start" || line.hasArrow === "both") {
+        drawArrowHead(ctx, fromCoords.x, fromCoords.y, -startDir.x, -startDir.y, color, Math.max(8, thickness * 3.5));
+    }
+
+    ctx.setLineDash([]);
+}
+
+function loadImageElement(src) {
+    return new Promise((resolve) => {
+        if (!src) {
+            resolve(null);
+            return;
+        }
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = src;
+    });
+}
+
+// Utility to render the flowchart model into a single PNG image URL
 async function getFlowchartCanvasImage() {
-    // 1. Hide interactive GUI elements temporarily
-    const ports = document.querySelectorAll(".port");
-    const resizeHandles = document.querySelectorAll(".resize-handle");
-    const activeIndicators = document.querySelectorAll(".node.selected");
-    
-    ports.forEach(p => p.style.opacity = "0");
-    resizeHandles.forEach(h => h.style.display = "none");
-    activeIndicators.forEach(el => el.classList.remove("selected"));
-    
-    // Save current pan & zoom
-    const originalTransform = { ...viewportTransform };
-    
-    // 2. Normalise scale to 1.0 to render a crisp high-res screenshot
-    viewportTransform.scale = 1.0;
-    
-    // Find absolute bounds of all nodes to calculate fit coordinates
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     const nodeIds = Object.keys(nodes);
-    
+
     if (nodeIds.length === 0) {
         minX = -100; maxX = 100; minY = -100; maxY = 100;
     } else {
@@ -3198,62 +3417,106 @@ async function getFlowchartCanvasImage() {
             maxY = Math.max(maxY, node.y + node.height / 2);
         });
     }
-    
+
     const margin = 40;
-    const fitW = (maxX - minX) + margin * 2;
-    const fitH = (maxY - minY) + margin * 2;
-    
-    // Center viewport translation relative to calculated bounding box center
-    viewportTransform.x = -minX + margin;
-    viewportTransform.y = -minY + margin;
-    updateCanvasTransform();
-    
-    // 3. Render canvas using html-to-image (avoids html2canvas var() parsing issues)
-    try {
-        if (!window.htmlToImage || typeof window.htmlToImage.toPng !== "function") {
-            throw new Error("Image export library failed to load");
+    const outW = Math.max(1, Math.ceil((maxX - minX) + margin * 2));
+    const outH = Math.max(1, Math.ceil((maxY - minY) + margin * 2));
+    const originX = minX - margin;
+    const originY = minY - margin;
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = outW;
+    exportCanvas.height = outH;
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) throw new Error("Could not create export canvas");
+
+    ctx.fillStyle = resolveCssColorVar("--bg-app", "#f8fafc");
+    ctx.fillRect(0, 0, outW, outH);
+
+    ctx.save();
+    ctx.translate(-originX, -originY);
+
+    lines.forEach(line => drawLineOnCanvas(ctx, line));
+
+    const orderedNodes = Object.values(nodes).slice().sort((a, b) => (a.zIndex || 10) - (b.zIndex || 10));
+    const imageNodes = orderedNodes.filter(n => n.type === "image");
+    const loadedImages = await Promise.all(imageNodes.map(n => loadImageElement(n.imageUrl)));
+    const imageMap = new Map();
+    imageNodes.forEach((node, idx) => imageMap.set(node.id, loadedImages[idx]));
+
+    orderedNodes.forEach(node => {
+        const x = node.x - node.width / 2;
+        const y = node.y - node.height / 2;
+        const w = node.width;
+        const h = node.height;
+
+        if (node.type === "image") {
+            const img = imageMap.get(node.id);
+            if (img) {
+                const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+                const left = Math.max(0, Math.min(0.9, Number(crop.left) || 0));
+                const top = Math.max(0, Math.min(0.9, Number(crop.top) || 0));
+                const right = Math.max(0, Math.min(0.9, Number(crop.right) || 0));
+                const bottom = Math.max(0, Math.min(0.9, Number(crop.bottom) || 0));
+                const visW = Math.max(0.05, 1 - left - right);
+                const visH = Math.max(0.05, 1 - top - bottom);
+
+                const sx = img.width * left;
+                const sy = img.height * top;
+                const sw = img.width * visW;
+                const sh = img.height * visH;
+
+                ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+            }
+
+            const borderW = Number(node.borderWidth) || 1;
+            if (borderW > 0) {
+                ctx.strokeStyle = node.borderColor || "#cbd5e1";
+                ctx.lineWidth = borderW;
+                setDashedStroke(ctx, node.borderStyle || "solid");
+                ctx.strokeRect(x + borderW / 2, y + borderW / 2, Math.max(1, w - borderW), Math.max(1, h - borderW));
+                ctx.setLineDash([]);
+            }
+            return;
         }
 
-        const outW = Math.max(1, Math.ceil(fitW));
-        const outH = Math.max(1, Math.ceil(fitH));
-        const imgData = await window.htmlToImage.toPng(canvas, {
-            cacheBust: true,
-            pixelRatio: 2,
-            backgroundColor: resolveCssColorVar("--bg-app", "#f8fafc"),
-            width: outW,
-            height: outH,
-            style: {
-                width: `${outW}px`,
-                height: `${outH}px`
+        if (node.shapeType !== "text-box") {
+            const strokeW = Number(node.borderWidth) || 0;
+            ctx.fillStyle = node.bgColor || "transparent";
+            ctx.strokeStyle = node.borderColor || "#64748b";
+            ctx.lineWidth = strokeW;
+            setDashedStroke(ctx, node.borderStyle || "solid");
+
+            drawNodeShapePath(ctx, node, x, y, w, h, strokeW);
+            if (node.bgColor && node.bgColor !== "transparent") ctx.fill();
+            if (strokeW > 0) ctx.stroke();
+
+            if (node.shapeType === "sticky-note") {
+                const foldSize = Math.min(w, h) * 0.2;
+                const s = strokeW || 1;
+                ctx.fillStyle = "#fef9c3";
+                ctx.beginPath();
+                ctx.moveTo(x + w - foldSize - s / 2, y + s / 2);
+                ctx.lineTo(x + w - foldSize - s / 2, y + foldSize + s / 2);
+                ctx.lineTo(x + w - s / 2, y + foldSize + s / 2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = node.borderColor || "#ca8a04";
+                ctx.stroke();
             }
-        });
-        
-        // Restore interactive visuals
-        ports.forEach(p => p.style.opacity = "");
-        resizeHandles.forEach(h => h.style.display = "");
-        if (selectedId && selectedType === "node") {
-            const selEl = document.getElementById("node-" + selectedId);
-            if (selEl) selEl.classList.add("selected");
+            ctx.setLineDash([]);
         }
-        
-        // Restore zoom
-        viewportTransform = originalTransform;
-        updateCanvasTransform();
-        
-        return {
-            imgData,
-            width: outW,
-            height: outH
-        };
-    } catch (e) {
-        console.error("Canvas capture failed:", e);
-        // Restore states anyway
-        ports.forEach(p => p.style.opacity = "");
-        resizeHandles.forEach(h => h.style.display = "");
-        viewportTransform = originalTransform;
-        updateCanvasTransform();
-        throw e;
-    }
+
+        drawNodeLabel(ctx, node, x, y, w, h);
+    });
+
+    ctx.restore();
+
+    return {
+        imgData: exportCanvas.toDataURL("image/png"),
+        width: outW,
+        height: outH
+    };
 }
 
 async function exportToPDF() {
