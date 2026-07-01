@@ -613,8 +613,13 @@ body, html {
     width: 100%;
     height: 100%;
     overflow: visible;
-    pointer-events: none;
+    pointer-events: auto;
     z-index: 2;
+}
+
+body.line-edit-mode .svg-connector-overlay,
+body.line-end-dragging .svg-connector-overlay {
+    z-index: 7;
 }
 
 .connector-line {
@@ -624,6 +629,7 @@ body, html {
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
+    pointer-events: none;
 }
 
 .connector-line.selected {
@@ -650,7 +656,7 @@ body, html {
     fill: #ffffff;
     stroke: var(--accent-primary);
     stroke-width: 2px;
-    cursor: grab;
+    cursor: crosshair;
     pointer-events: all;
     transition: stroke-width var(--transition-fast), filter var(--transition-fast);
 }
