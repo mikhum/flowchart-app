@@ -857,6 +857,10 @@ body.line-end-dragging .svg-connector-overlay {
     display: block;
 }
 
+body.node-multi-select-mode .node.selected .resize-handle {
+    display: none;
+}
+
 /* Ports - Connection Points */
 .port {
     position: absolute;
@@ -948,6 +952,15 @@ body.line-end-dragging .node {
 
 .node.image-node.selected::after {
     border-radius: 4px;
+}
+
+.marquee-selection-box {
+    position: absolute;
+    border: 1.5px dashed var(--accent-primary);
+    background: rgba(14, 165, 233, 0.14);
+    pointer-events: none;
+    z-index: 12;
+    border-radius: 6px;
 }
 
 /* Properties Panel */

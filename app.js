@@ -8,6 +8,7 @@ let lines = [];
 // Selection states
 let selectedId = null; 
 let selectedType = null; // 'node' | 'line'
+let selectedNodeIds = new Set();
 let copiedElement = null; // { type: 'node' | 'line', payload: object }
 let pasteSerial = 0;
 
@@ -16,12 +17,20 @@ let viewportTransform = { x: 0, y: 0, scale: 1 };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let panOffset = { x: 0, y: 0 };
+let isMarqueeSelecting = false;
+let marqueeStartMouse = { x: 0, y: 0 };
+let marqueeStartCanvas = { x: 0, y: 0 };
+let marqueeCurrentCanvas = { x: 0, y: 0 };
+let marqueeMoved = false;
+let marqueeAdditive = false;
+let marqueeBaseSelection = new Set();
 
 // Node drag and resize states
 let draggingNodeId = null;
 let dragStartMouse = { x: 0, y: 0 };
 let dragStartNodePos = { x: 0, y: 0 };
 let dragDelta = { x: 0, y: 0 };
+let dragStartNodePositions = {};
 
 let resizingNodeId = null;
 let resizeStartMouse = { x: 0, y: 0 };
@@ -121,6 +130,7 @@ const canvas = document.getElementById("canvas");
 const nodesContainer = document.getElementById("nodes-container");
 const lineHandlesLayer = document.getElementById("line-handles-layer");
 const svgOverlay = document.getElementById("svg-overlay");
+const marqueeSelectionBox = document.getElementById("marquee-selection-box");
 const zoomIndicator = document.getElementById("zoom-indicator");
 const docTitle = document.getElementById("doc-title");
 const saveStatus = document.getElementById("save-status");
@@ -348,18 +358,24 @@ function setupColorPickers() {
 }
 
 function selectBgColor(color) {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].bgColor = color;
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].bgColor = color;
+        });
         saveHistory();
+        saveAutosave();
         render();
         updatePropertiesPanel();
     }
 }
 
 function selectBorderColor(color) {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].borderColor = color;
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderColor = color;
+        });
         saveHistory();
+        saveAutosave();
         render();
         updatePropertiesPanel();
     }
@@ -549,21 +565,103 @@ function updateCanvasTransform() {
     zoomIndicator.textContent = `${Math.round(viewportTransform.scale * 100)}%`;
 }
 
+function setMarqueeBoxVisibility(visible) {
+    if (!marqueeSelectionBox) return;
+    marqueeSelectionBox.style.display = visible ? "block" : "none";
+}
+
+function updateMarqueeBox() {
+    if (!marqueeSelectionBox) return;
+    const left = Math.min(marqueeStartCanvas.x, marqueeCurrentCanvas.x);
+    const top = Math.min(marqueeStartCanvas.y, marqueeCurrentCanvas.y);
+    const width = Math.abs(marqueeCurrentCanvas.x - marqueeStartCanvas.x);
+    const height = Math.abs(marqueeCurrentCanvas.y - marqueeStartCanvas.y);
+    marqueeSelectionBox.style.left = `${left}px`;
+    marqueeSelectionBox.style.top = `${top}px`;
+    marqueeSelectionBox.style.width = `${width}px`;
+    marqueeSelectionBox.style.height = `${height}px`;
+}
+
+function getMarqueeRect() {
+    return {
+        left: Math.min(marqueeStartCanvas.x, marqueeCurrentCanvas.x),
+        right: Math.max(marqueeStartCanvas.x, marqueeCurrentCanvas.x),
+        top: Math.min(marqueeStartCanvas.y, marqueeCurrentCanvas.y),
+        bottom: Math.max(marqueeStartCanvas.y, marqueeCurrentCanvas.y)
+    };
+}
+
+function getMarqueeNodeHits() {
+    const rect = getMarqueeRect();
+    const hits = new Set();
+    Object.values(nodes).forEach(node => {
+        const nodeLeft = node.x - (node.width || 120) / 2;
+        const nodeRight = node.x + (node.width || 120) / 2;
+        const nodeTop = node.y - (node.height || 60) / 2;
+        const nodeBottom = node.y + (node.height || 60) / 2;
+        const overlaps = !(nodeRight < rect.left || nodeLeft > rect.right || nodeBottom < rect.top || nodeTop > rect.bottom);
+        if (overlaps) hits.add(node.id);
+    });
+    return hits;
+}
+
+function applyNodeSelection(nodeIds, options = {}) {
+    const validNodeIds = Array.from(nodeIds).filter(nodeId => !!nodes[nodeId]);
+    selectedNodeIds = new Set(validNodeIds);
+    if (selectedNodeIds.size > 0) {
+        selectedType = "node";
+        selectedId = validNodeIds[validNodeIds.length - 1];
+    } else {
+        selectedType = null;
+        selectedId = null;
+    }
+
+    document.body.classList.toggle("line-edit-mode", selectedType === "line" && !!selectedId);
+    document.body.classList.toggle("node-multi-select-mode", selectedType === "node" && selectedNodeIds.size > 1);
+    Object.keys(nodes).forEach(nodeId => {
+        const el = document.getElementById("node-" + nodeId);
+        if (el) el.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(nodeId));
+    });
+
+    if (!options.silent) {
+        updatePropertiesPanel();
+        renderConnectors();
+    }
+}
+
+function updateMarqueeSelection() {
+    const hits = getMarqueeNodeHits();
+    const selection = marqueeAdditive ? new Set([...marqueeBaseSelection, ...hits]) : hits;
+    applyNodeSelection(selection, { silent: true });
+}
+
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
-    // Escape properties selection on background click
-    if (selectedId && !e.target.closest(".node") && !e.target.closest(".properties-panel") && !e.target.closest(".topbar") && !e.target.closest(".sidebar") && !e.target.closest(".floating-controls") && !e.target.closest(".connector-line-overlay") && !e.target.closest(".line-end-handle-ui")) {
-        selectElement(null);
-    }
-    
     if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui")) {
         return;
     }
-    
-    isPanning = true;
-    canvas.classList.add("grabbing");
-    panStart = { x: e.clientX, y: e.clientY };
-    panOffset = { x: viewportTransform.x, y: viewportTransform.y };
+
+    // Keep panning available with middle mouse button.
+    if (e.button === 1) {
+        isPanning = true;
+        canvas.classList.add("grabbing");
+        panStart = { x: e.clientX, y: e.clientY };
+        panOffset = { x: viewportTransform.x, y: viewportTransform.y };
+        workspace.setPointerCapture(e.pointerId);
+        return;
+    }
+
+    if (e.button !== 0) return;
+
+    marqueeAdditive = e.ctrlKey || e.metaKey || e.shiftKey;
+    marqueeBaseSelection = marqueeAdditive ? new Set(selectedNodeIds) : new Set();
+    isMarqueeSelecting = true;
+    marqueeMoved = false;
+    marqueeStartMouse = { x: e.clientX, y: e.clientY };
+    marqueeStartCanvas = screenToCanvas(e.clientX, e.clientY);
+    marqueeCurrentCanvas = { ...marqueeStartCanvas };
+    updateMarqueeBox();
+    setMarqueeBoxVisibility(false);
     workspace.setPointerCapture(e.pointerId);
 }
 
@@ -574,6 +672,18 @@ function handleGlobalPointerMove(e) {
         viewportTransform.x = panOffset.x + dx;
         viewportTransform.y = panOffset.y + dy;
         updateCanvasTransform();
+    } else if (isMarqueeSelecting) {
+        marqueeCurrentCanvas = screenToCanvas(e.clientX, e.clientY);
+        const moveDistance = Math.hypot(e.clientX - marqueeStartMouse.x, e.clientY - marqueeStartMouse.y);
+        if (!marqueeMoved && moveDistance > 4) {
+            marqueeMoved = true;
+            setMarqueeBoxVisibility(true);
+        }
+
+        if (marqueeMoved) {
+            updateMarqueeBox();
+            updateMarqueeSelection();
+        }
     } else if (draggingLineEnd && draggingLineEnd.lineId) {
         const coords = screenToCanvas(e.clientX, e.clientY);
         lineDrawingMousePos = coords;
@@ -592,15 +702,23 @@ function handleGlobalPointerMove(e) {
         const startCoords = screenToCanvas(dragStartMouse.x, dragStartMouse.y);
         const dx = coords.x - startCoords.x;
         const dy = coords.y - startCoords.y;
-        
-        nodes[draggingNodeId].x = snap(dragStartNodePos.x + dx);
-        nodes[draggingNodeId].y = snap(dragStartNodePos.y + dy);
-        
-        const nodeEl = document.getElementById("node-" + draggingNodeId);
-        if (nodeEl) {
-            nodeEl.style.left = `${nodes[draggingNodeId].x}px`;
-            nodeEl.style.top = `${nodes[draggingNodeId].y}px`;
-        }
+
+        const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
+            ? Array.from(selectedNodeIds)
+            : [draggingNodeId];
+
+        draggedSelection.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const startPos = dragStartNodePositions[nodeId] || { x: nodes[nodeId].x, y: nodes[nodeId].y };
+            nodes[nodeId].x = snap(startPos.x + dx);
+            nodes[nodeId].y = snap(startPos.y + dy);
+
+            const nodeEl = document.getElementById("node-" + nodeId);
+            if (nodeEl) {
+                nodeEl.style.left = `${nodes[nodeId].x}px`;
+                nodeEl.style.top = `${nodes[nodeId].y}px`;
+            }
+        });
         renderConnectors();
     } else if (resizingNodeId && nodes[resizingNodeId]) {
         // Resize shape node
@@ -661,6 +779,18 @@ function handleGlobalPointerUp(e) {
         isPanning = false;
         canvas.classList.remove("grabbing");
         try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
+    } else if (isMarqueeSelecting) {
+        if (marqueeMoved) {
+            updateMarqueeSelection();
+            applyNodeSelection(selectedNodeIds);
+        } else if (!marqueeAdditive) {
+            selectElement(null);
+        }
+
+        isMarqueeSelecting = false;
+        marqueeMoved = false;
+        setMarqueeBoxVisibility(false);
+        try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
     } else if (draggingLineEnd) {
         const line = lines.find(l => l.id === draggingLineEnd.lineId);
         if (line && lineEndSnapTarget) {
@@ -682,8 +812,15 @@ function handleGlobalPointerUp(e) {
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
     } else if (draggingNodeId) {
-        const didMove = dragStartNodePos.x !== nodes[draggingNodeId].x || dragStartNodePos.y !== nodes[draggingNodeId].y;
+        const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
+            ? Array.from(selectedNodeIds)
+            : [draggingNodeId];
+        const didMove = draggedSelection.some(nodeId => {
+            const startPos = dragStartNodePositions[nodeId];
+            return startPos && nodes[nodeId] && (startPos.x !== nodes[nodeId].x || startPos.y !== nodes[nodeId].y);
+        });
         draggingNodeId = null;
+        dragStartNodePositions = {};
         if (didMove) {
             saveHistory();
             saveAutosave();
@@ -926,7 +1063,7 @@ function render() {
             
             // Drag handle to move text offset
             textContainer.addEventListener("pointerdown", (e) => {
-                if (selectedId === id && selectedType === "node") {
+                if (selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(id)) {
                     e.stopPropagation();
                     draggingTextNodeId = id;
                     dragStartMouse = { x: e.clientX, y: e.clientY };
@@ -948,11 +1085,25 @@ function render() {
                 if (e.target.classList.contains("port") || e.target.classList.contains("resize-handle")) return;
                 if (draggingLineEnd || document.body.classList.contains("line-end-dragging")) return;
                 e.stopPropagation();
-                selectElement(id, "node");
+                const isToggleSelection = e.ctrlKey || e.metaKey;
+                if (isToggleSelection) {
+                    selectElement(id, "node", { toggle: true });
+                    if (!selectedNodeIds.has(id)) return;
+                } else if (!(selectedType === "node" && selectedNodeIds.has(id))) {
+                    selectElement(id, "node");
+                }
                 
                 draggingNodeId = id;
                 dragStartMouse = { x: e.clientX, y: e.clientY };
                 dragStartNodePos = { x: node.x, y: node.y };
+                dragStartNodePositions = {};
+                const dragTargets = (selectedType === "node" && selectedNodeIds.size > 0)
+                    ? Array.from(selectedNodeIds)
+                    : [id];
+                dragTargets.forEach(nodeId => {
+                    if (!nodes[nodeId]) return;
+                    dragStartNodePositions[nodeId] = { x: nodes[nodeId].x, y: nodes[nodeId].y };
+                });
                 nodeEl.setPointerCapture(e.pointerId);
             });
             
@@ -979,7 +1130,7 @@ function render() {
         nodeEl.style.zIndex = node.zIndex || 10;
         
         // Handle selection state styling
-        nodeEl.classList.toggle("selected", selectedId === id && selectedType === "node");
+        nodeEl.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(id));
         nodeEl.classList.toggle("image-node", node.type === "image");
         
         // Inline shape template SVG or image container
@@ -1395,15 +1546,50 @@ function startTextEdit(nodeId) {
 }
 
 // --- Selection & Properties Update ---
-function selectElement(id, type = null) {
-    selectedId = id;
-    selectedType = type;
+function selectElement(id, type = null, options = {}) {
+
+    if (!id || !type) {
+        selectedId = null;
+        selectedType = null;
+        selectedNodeIds = new Set();
+    } else if (type === "line") {
+        selectedId = id;
+        selectedType = "line";
+        selectedNodeIds = new Set();
+    } else if (type === "node") {
+        selectedType = "node";
+        if (options.toggle) {
+            if (selectedNodeIds.has(id)) {
+                selectedNodeIds.delete(id);
+                if (selectedId === id) {
+                    if (selectedNodeIds.size > 0) {
+                        const selectedIds = Array.from(selectedNodeIds);
+                        selectedId = selectedIds[selectedIds.length - 1];
+                    } else {
+                        selectedId = null;
+                    }
+                }
+                if (selectedNodeIds.size === 0) {
+                    selectedType = null;
+                    selectedId = null;
+                }
+            } else {
+                selectedNodeIds.add(id);
+                selectedId = id;
+            }
+        } else {
+            selectedNodeIds = new Set([id]);
+            selectedId = id;
+        }
+    }
+
     document.body.classList.toggle("line-edit-mode", selectedType === "line" && !!selectedId);
+    document.body.classList.toggle("node-multi-select-mode", selectedType === "node" && selectedNodeIds.size > 1);
     
     // Update visual nodes selected state
     Object.keys(nodes).forEach(nodeId => {
         const el = document.getElementById("node-" + nodeId);
-        if (el) el.classList.toggle("selected", selectedId === nodeId && selectedType === "node");
+        if (el) el.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(nodeId));
     });
     
     updatePropertiesPanel();
@@ -1411,7 +1597,7 @@ function selectElement(id, type = null) {
 }
 
 function updatePropertiesPanel() {
-    if (!selectedId) {
+    if (!selectedId && selectedNodeIds.size === 0) {
         propertiesPanel.style.display = "none";
         propNodeSection.style.display = "none";
         propLineSection.style.display = "none";
@@ -1420,11 +1606,19 @@ function updatePropertiesPanel() {
     
     propertiesPanel.style.display = "flex";
     
-    if (selectedType === "node" && nodes[selectedId]) {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
         propNodeSection.style.display = "block";
         propLineSection.style.display = "none";
-        
-        const node = nodes[selectedId];
+
+        const referenceNodeId = selectedId && nodes[selectedId] ? selectedId : Array.from(selectedNodeIds).find(nodeId => !!nodes[nodeId]);
+        const node = referenceNodeId ? nodes[referenceNodeId] : null;
+        if (!node) {
+            propertiesPanel.style.display = "none";
+            propNodeSection.style.display = "none";
+            propLineSection.style.display = "none";
+            return;
+        }
+
         propText.value = node.text;
         propTextSize.value = node.textSize || 14;
         propUrl.value = node.url || "";
@@ -1466,47 +1660,64 @@ function updatePropertiesPanel() {
 
 // Properties changes handlers
 function updateSelectedNodeText() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].text = propText.value;
-        const textSpan = document.querySelector(`#node-${selectedId} .node-text`);
-        if (textSpan) textSpan.textContent = propText.value;
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            nodes[nodeId].text = propText.value;
+            const textSpan = document.querySelector(`#node-${nodeId} .node-text`);
+            if (textSpan) textSpan.textContent = propText.value;
+        });
     }
 }
 
 function updateSelectedNodeTextSize() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].textSize = parseInt(propTextSize.value, 10) || 14;
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const textSize = parseInt(propTextSize.value, 10) || 14;
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].textSize = textSize;
+        });
         render();
     }
 }
 
 function updateSelectedNodeUrl() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].url = propUrl.value.trim();
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const url = propUrl.value.trim();
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].url = url;
+        });
         render();
     }
 }
 
 function updateSelectedNodeWidth() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        const width = Math.max(40, parseInt(propNodeWidth.value, 10) || nodes[selectedId].width || 120);
-        nodes[selectedId].width = snap(width);
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const width = Math.max(40, parseInt(propNodeWidth.value, 10) || nodes[nodeId].width || 120);
+            nodes[nodeId].width = snap(width);
+        });
         saveHistory();
+        saveAutosave();
         render();
     }
 }
 
 function updateSelectedNodeHeight() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        const height = Math.max(30, parseInt(propNodeHeight.value, 10) || nodes[selectedId].height || 60);
-        nodes[selectedId].height = snap(height);
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const height = Math.max(30, parseInt(propNodeHeight.value, 10) || nodes[nodeId].height || 60);
+            nodes[nodeId].height = snap(height);
+        });
         saveHistory();
+        saveAutosave();
         render();
     }
 }
 
 function updateSelectedNodeCrop() {
-    if (selectedType === "node" && nodes[selectedId] && nodes[selectedId].type === "image") {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
         const left = Math.max(0, Math.min(90, parseInt(propCropLeft.value, 10) || 0)) / 100;
         const top = Math.max(0, Math.min(90, parseInt(propCropTop.value, 10) || 0)) / 100;
         const right = Math.max(0, Math.min(90, parseInt(propCropRight.value, 10) || 0)) / 100;
@@ -1517,42 +1728,66 @@ function updateSelectedNodeCrop() {
         const maxTB = Math.max(0, 0.95 - bottom);
         const safeTop = Math.min(top, maxTB);
 
-        nodes[selectedId].crop = {
-            left: safeLeft,
-            top: safeTop,
-            right,
-            bottom
-        };
+        let hasImageSelection = false;
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId] || nodes[nodeId].type !== "image") return;
+            hasImageSelection = true;
+            nodes[nodeId].crop = {
+                left: safeLeft,
+                top: safeTop,
+                right,
+                bottom
+            };
+        });
 
-        saveHistory();
-        render();
+        if (hasImageSelection) {
+            saveHistory();
+            saveAutosave();
+            render();
+        }
     }
 }
 
 function resetSelectedNodeCrop() {
-    if (selectedType === "node" && nodes[selectedId] && nodes[selectedId].type === "image") {
-        nodes[selectedId].crop = { left: 0, top: 0, right: 0, bottom: 0 };
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        let hasImageSelection = false;
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId] || nodes[nodeId].type !== "image") return;
+            hasImageSelection = true;
+            nodes[nodeId].crop = { left: 0, top: 0, right: 0, bottom: 0 };
+        });
+        if (!hasImageSelection) return;
+
         propCropLeft.value = "0";
         propCropTop.value = "0";
         propCropRight.value = "0";
         propCropBottom.value = "0";
         saveHistory();
+        saveAutosave();
         render();
     }
 }
 
 function updateSelectedNodeBorderWidth() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].borderWidth = parseInt(propBorderWidth.value, 10);
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const borderWidth = parseInt(propBorderWidth.value, 10);
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderWidth = borderWidth;
+        });
         saveHistory();
+        saveAutosave();
         render();
     }
 }
 
 function updateSelectedNodeBorderStyle() {
-    if (selectedType === "node" && nodes[selectedId]) {
-        nodes[selectedId].borderStyle = propBorderStyle.value;
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const borderStyle = propBorderStyle.value;
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderStyle = borderStyle;
+        });
         saveHistory();
+        saveAutosave();
         render();
     }
 }
@@ -1628,10 +1863,17 @@ function resetDefaultLineSettings() {
 }
 
 function deleteSelectedElement() {
-    if (!selectedId) return;
+    if (!selectedId && selectedNodeIds.size === 0) return;
     
-    if (selectedType === "node") {
-        deleteNode(selectedId);
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const idsToDelete = new Set(selectedNodeIds);
+        idsToDelete.forEach(nodeId => {
+            delete nodes[nodeId];
+        });
+        lines = lines.filter(l => !idsToDelete.has(l.fromId) && !idsToDelete.has(l.toId));
+        saveHistory();
+        saveAutosave();
+        render();
     } else if (selectedType === "line") {
         deleteLine(selectedId);
     }
@@ -1657,12 +1899,20 @@ function deleteLine(lineId) {
 }
 
 function bringToFront() {
-    if (selectedType === "node" && nodes[selectedId]) {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
         let maxZ = 10;
         Object.values(nodes).forEach(n => {
             if (n.zIndex && n.zIndex > maxZ) maxZ = n.zIndex;
         });
-        nodes[selectedId].zIndex = maxZ + 1;
+
+        const selectedNodes = Array.from(selectedNodeIds)
+            .filter(nodeId => !!nodes[nodeId])
+            .sort((a, b) => (nodes[a].zIndex || 10) - (nodes[b].zIndex || 10));
+        if (selectedNodes.length === 0) return;
+
+        selectedNodes.forEach((nodeId, index) => {
+            nodes[nodeId].zIndex = maxZ + 1 + index;
+        });
         saveHistory();
         saveAutosave();
         render();
@@ -1681,12 +1931,20 @@ function bringToFront() {
 }
 
 function sendToBack() {
-    if (selectedType === "node" && nodes[selectedId]) {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
         let minZ = 10;
         Object.values(nodes).forEach(n => {
             if (n.zIndex && n.zIndex < minZ) minZ = n.zIndex;
         });
-        nodes[selectedId].zIndex = minZ - 1;
+
+        const selectedNodes = Array.from(selectedNodeIds)
+            .filter(nodeId => !!nodes[nodeId])
+            .sort((a, b) => (nodes[a].zIndex || 10) - (nodes[b].zIndex || 10));
+        if (selectedNodes.length === 0) return;
+
+        selectedNodes.forEach((nodeId, index) => {
+            nodes[nodeId].zIndex = minZ - selectedNodes.length + index;
+        });
         saveHistory();
         saveAutosave();
         render();
@@ -1790,7 +2048,7 @@ function handleKeyDown(e) {
     }
     
     // F2 to Edit Text
-    if (e.key === "F2" && selectedId && selectedType === "node") {
+    if (e.key === "F2" && selectedType === "node" && selectedNodeIds.size === 1 && selectedId && nodes[selectedId]) {
         e.preventDefault();
         startTextEdit(selectedId);
     }
