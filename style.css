@@ -652,6 +652,13 @@ body.line-end-dragging .svg-connector-overlay {
     pointer-events: stroke;
 }
 
+.line-end-hit-target {
+    fill: transparent;
+    stroke: transparent;
+    pointer-events: all;
+    cursor: crosshair;
+}
+
 .line-end-handle-ui {
     position: absolute;
     width: 16px;
