@@ -637,7 +637,7 @@ function updateMarqueeSelection() {
 
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui")) {
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-end-hit-target") || e.target.closest(".line-handles-layer")) {
         return;
     }
 
@@ -688,7 +688,7 @@ function handleGlobalPointerMove(e) {
         const coords = screenToCanvas(e.clientX, e.clientY);
         lineDrawingMousePos = coords;
 
-        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
+        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 40);
 
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         if (lineEndSnapTarget) {
@@ -809,6 +809,7 @@ function handleGlobalPointerUp(e) {
         lineEndSnapTarget = null;
         lineDrawingMousePos = null;
         document.body.classList.remove("line-end-dragging");
+        try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
     } else if (draggingNodeId) {
@@ -1364,7 +1365,7 @@ function renderConnectors() {
         svgOverlay.appendChild(overlay);
 
         if (selectedId === line.id && selectedType === "line" && lineHandlesLayer) {
-            const beginLineEndDrag = (end) => {
+            const beginLineEndDrag = (end, pointerEvent = null) => {
                 selectElement(line.id, "line");
                 draggingNodeId = null;
                 resizingNodeId = null;
@@ -1373,7 +1374,12 @@ function renderConnectors() {
                 activePortName = null;
                 draggingLineEnd = { lineId: line.id, end };
                 lineEndSnapTarget = null;
+                const startCoords = end === "from" ? fromCoords : toCoords;
+                lineDrawingMousePos = { x: startCoords.x, y: startCoords.y };
                 document.body.classList.add("line-end-dragging");
+                if (pointerEvent) {
+                    try { workspace.setPointerCapture(pointerEvent.pointerId); } catch(err) {}
+                }
             };
 
             const fromHandle = document.createElement("div");
@@ -1383,7 +1389,7 @@ function renderConnectors() {
             fromHandle.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("from");
+                beginLineEndDrag("from", e);
             });
             lineHandlesLayer.appendChild(fromHandle);
 
@@ -1394,7 +1400,7 @@ function renderConnectors() {
             toHandle.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("to");
+                beginLineEndDrag("to", e);
             });
             lineHandlesLayer.appendChild(toHandle);
 
@@ -1407,7 +1413,7 @@ function renderConnectors() {
             fromHit.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("from");
+                beginLineEndDrag("from", e);
             });
             svgOverlay.appendChild(fromHit);
 
@@ -1419,7 +1425,7 @@ function renderConnectors() {
             toHit.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("to");
+                beginLineEndDrag("to", e);
             });
             svgOverlay.appendChild(toHit);
         }
