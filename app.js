@@ -709,7 +709,6 @@ function handleCanvasDrop(e) {
 
 function addNewShapeNode(shapeType, x, y) {
     const id = "node_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-    const isNetwork = ["server", "router", "switch", "firewall", "cloud", "pc", "user"].includes(shapeType);
     const isTextBox = shapeType === "text-box";
     const isStickyNote = shapeType === "sticky-note";
     
@@ -719,14 +718,14 @@ function addNewShapeNode(shapeType, x, y) {
         shapeType: shapeType,
         x: x,
         y: y,
-        width: isNetwork ? 80 : 120,
-        height: isNetwork ? 80 : (isTextBox ? 36 : (isStickyNote ? 90 : 60)),
-        text: isNetwork ? shapeType.charAt(0).toUpperCase() + shapeType.slice(1) : (isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape")),
+        width: 120,
+        height: isTextBox ? 36 : (isStickyNote ? 90 : 60),
+        text: isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape"),
         textOffset: { x: 0, y: 0 },
         textSize: 14,
-        bgColor: isNetwork ? "transparent" : (isTextBox ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff")),
-        borderColor: isNetwork ? "transparent" : (isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b")),
-        borderWidth: (isNetwork || isTextBox) ? 0 : (isStickyNote ? 1 : 2),
+        bgColor: isTextBox ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff"),
+        borderColor: isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b"),
+        borderWidth: isTextBox ? 0 : (isStickyNote ? 1 : 2),
         borderStyle: "solid",
         url: ""
     };
@@ -1050,19 +1049,6 @@ function generateShapeSVG(node) {
         case "hexagon":
             return `<svg><polygon points="${w*0.18} ${strokeW}, ${w*0.82} ${strokeW}, ${w-strokeW} ${h/2}, ${w*0.82} ${h - strokeW}, ${w*0.18} ${h - strokeW}, ${strokeW} ${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
 
-        // Network infrastructure vector cards (styled processes)
-        case "server":
-        case "router":
-        case "switch":
-        case "firewall":
-        case "cloud":
-        case "pc":
-        case "user":
-            // premium glassmorphic circle background for network icons
-            return `<svg>
-                <circle cx="${w/2}" cy="${h/2}" r="${Math.min(w,h)/2.2}" fill="rgba(14, 165, 233, 0.08)" stroke="var(--accent-primary)" stroke-width="2" stroke-dasharray="${dash}"/>
-            </svg>`;
-            
         default:
             return "";
     }
@@ -2058,8 +2044,7 @@ function normalizeShapeType(shapeType) {
     };
     const supported = new Set([
         "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-        "text-box", "sticky-note",
-        "server", "router", "switch", "firewall", "cloud", "pc", "user"
+        "text-box", "sticky-note"
     ]);
     const mapped = map[val] || val;
     return supported.has(mapped) ? mapped : "rectangle";
@@ -2212,7 +2197,7 @@ function getParentShapeElement(shapeEl) {
 
 function detectFlowcraftShapeTypeFromVisio(shapeEl) {
     const hint = String(shapeEl?.getAttribute("NameU") || shapeEl?.getAttribute("Name") || "").toLowerCase();
-    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "cloud";
+    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "rectangle";
     if (hint.includes("bpmnactivity")) return "terminator";
     if (hint.includes("stickiesstickynoteblock") || hint.includes("sticky")) return "document";
     if (hint.includes("defaultsquareblock")) return "rectangle";
@@ -2223,12 +2208,7 @@ function detectFlowcraftShapeTypeFromVisio(shapeEl) {
     if (hint.includes("document")) return "document";
     if (hint.includes("hexagon") || hint.includes("preparation")) return "hexagon";
     if (hint.includes("circle") || hint.includes("connector")) return "circle";
-    if (hint.includes("cloud")) return "cloud";
-    if (hint.includes("server")) return "server";
-    if (hint.includes("router")) return "router";
-    if (hint.includes("switch")) return "switch";
-    if (hint.includes("firewall")) return "firewall";
-    if (hint.includes("user") || hint.includes("person")) return "user";
+    if (hint.includes("user") || hint.includes("person")) return "rectangle";
     return "rectangle";
 }
 

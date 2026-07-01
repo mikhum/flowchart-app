@@ -403,16 +403,6 @@ body, html {
     border-radius: 50%;
 }
 
-.net-icon {
-    font-size: 1.15rem;
-    color: var(--text-muted);
-    height: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.palette-item:hover .net-icon,
 .palette-item:hover .shape-icon {
     color: var(--accent-primary);
     border-color: var(--accent-primary);
