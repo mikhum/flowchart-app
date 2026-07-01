@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "2026-06-30-vsdx-domparser-2";
+const APP_BUILD = "2026-07-01-pdf-colorvar-fix-1";
 
 // --- Application State ---
 let nodes = {};
@@ -87,6 +87,11 @@ const DEFAULT_LINE_SETTINGS = {
     hasArrow: "end"
 };
 let defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+
+function resolveCssColorVar(varName, fallback) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    return value || fallback;
+}
 
 function loadDefaultLineSettings() {
     try {
@@ -728,8 +733,8 @@ function handleLibraryDragStart(e) {
     const preview = document.createElement("div");
     preview.className = "drag-preview-helper";
     preview.textContent = e.currentTarget.querySelector("span").textContent;
-    preview.style.backgroundColor = "var(--accent-primary-light)";
-    preview.style.border = "1px solid var(--accent-primary)";
+    preview.style.backgroundColor = resolveCssColorVar("--accent-primary-light", "#e0f2fe");
+    preview.style.border = `1px solid ${resolveCssColorVar("--accent-primary", "#0ea5e9")}`;
     preview.style.padding = "6px 12px";
     preview.style.borderRadius = "6px";
     document.body.appendChild(preview);
@@ -1024,11 +1029,11 @@ function render() {
             
             // Set text color dynamically for dark borders/fills
             if (node.bgColor === "transparent") {
-                textSpan.style.color = "var(--text-main)";
+                textSpan.style.color = resolveCssColorVar("--text-main", "#0f172a");
             } else {
                 // simple contrast calculation: light bg gets main text, dark gets white text
                 const isDark = ["#334155", "#0f172a", "#4f46e5", "#0ea5e9", "#ef4444", "#8b5cf6"].includes(node.bgColor);
-                textSpan.style.color = isDark ? "white" : "var(--text-main)";
+                textSpan.style.color = isDark ? "white" : resolveCssColorVar("--text-main", "#0f172a");
             }
         }
         
@@ -1175,7 +1180,7 @@ function renderConnectors() {
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", pathD);
         path.setAttribute("class", "connector-line" + (selectedId === line.id && selectedType === "line" ? " selected" : ""));
-        path.style.stroke = selectedId === line.id && selectedType === "line" ? "var(--accent-primary)" : line.color;
+        path.style.stroke = selectedId === line.id && selectedType === "line" ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
             e.stopPropagation();
@@ -3105,14 +3110,15 @@ async function openGoogleDriveExplorer() {
             
             const loadIcon = document.createElement("i");
             loadIcon.className = "fa-solid fa-cloud-arrow-down";
-            loadIcon.style.color = "var(--accent-primary)";
+            loadIcon.style.color = resolveCssColorVar("--accent-primary", "#0ea5e9");
             
             item.appendChild(info);
             item.appendChild(loadIcon);
             gdriveFilesContainer.appendChild(item);
         });
     } catch(e) {
-        gdriveFilesContainer.innerHTML = `<div class="empty-state" style="color: var(--accent-danger)">Error loading files: ${e.message}</div>`;
+        const errorColor = resolveCssColorVar("--accent-danger", "#ef4444");
+        gdriveFilesContainer.innerHTML = `<div class="empty-state" style="color: ${errorColor}">Error loading files: ${e.message}</div>`;
     }
 }
 
@@ -3205,7 +3211,7 @@ async function getFlowchartCanvasImage() {
     // 3. Invoke html2canvas on the canvas container
     try {
         const renderCanvas = await html2canvas(canvas, {
-            backgroundColor: "var(--bg-app)",
+            backgroundColor: resolveCssColorVar("--bg-app", "#f8fafc"),
             width: fitW,
             height: fitH,
             scrollX: 0,
