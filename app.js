@@ -93,6 +93,30 @@ function resolveCssColorVar(varName, fallback) {
     return value || fallback;
 }
 
+function copyComputedStyles(sourceEl, targetEl) {
+    const computed = getComputedStyle(sourceEl);
+    for (let i = 0; i < computed.length; i++) {
+        const prop = computed[i];
+        targetEl.style.setProperty(prop, computed.getPropertyValue(prop), computed.getPropertyPriority(prop));
+    }
+}
+
+function inlineComputedStylesForClone(sourceRoot, targetRoot) {
+    copyComputedStyles(sourceRoot, targetRoot);
+
+    const sourceWalker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_ELEMENT);
+    const targetWalker = document.createTreeWalker(targetRoot, NodeFilter.SHOW_ELEMENT);
+
+    let sourceNode = sourceWalker.nextNode();
+    let targetNode = targetWalker.nextNode();
+
+    while (sourceNode && targetNode) {
+        copyComputedStyles(sourceNode, targetNode);
+        sourceNode = sourceWalker.nextNode();
+        targetNode = targetWalker.nextNode();
+    }
+}
+
 function loadDefaultLineSettings() {
     try {
         const raw = localStorage.getItem(DEFAULT_LINE_SETTINGS_KEY);
@@ -3216,7 +3240,16 @@ async function getFlowchartCanvasImage() {
             height: fitH,
             scrollX: 0,
             scrollY: 0,
-            useCORS: true
+            useCORS: true,
+            onclone: (clonedDoc) => {
+                const clonedCanvas = clonedDoc.getElementById("canvas");
+                if (!clonedCanvas) return;
+
+                inlineComputedStylesForClone(canvas, clonedCanvas);
+
+                // Prevent html2canvas from parsing stylesheet var(...) expressions.
+                clonedDoc.querySelectorAll("style, link[rel='stylesheet']").forEach(el => el.remove());
+            }
         });
         
         // Restore interactive visuals
