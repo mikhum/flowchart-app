@@ -50,6 +50,14 @@ let googleClientId = localStorage.getItem("flowcraft_google_client_id") || "";
 let accessToken = "";
 let userProfile = null;
 let tokenClient = null;
+const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
+
+function isAllowedGoogleDomain(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    const email = String(payload.email || "").toLowerCase();
+    const hd = String(payload.hd || "").toLowerCase();
+    return hd === ALLOWED_GOOGLE_DOMAIN || email.endsWith("@" + ALLOWED_GOOGLE_DOMAIN);
+}
 
 // History Stack for Undo/Redo
 let undoStack = [];
@@ -2574,7 +2582,8 @@ function initGoogleClient() {
         // Initialize GIS Login client
         google.accounts.id.initialize({
             client_id: googleClientId,
-            callback: handleGoogleSignInCallback
+            callback: handleGoogleSignInCallback,
+            hd: ALLOWED_GOOGLE_DOMAIN
         });
         
         google.accounts.id.renderButton(
@@ -2587,10 +2596,14 @@ function initGoogleClient() {
             client_id: googleClientId,
             scope: "https://www.googleapis.com/auth/drive.file",
             callback: (resp) => {
-                if (resp && resp.access_token) {
+                // Extra safety: never keep token unless user is validated for allowed domain.
+                if (resp && resp.access_token && isAllowedGoogleDomain(userProfile)) {
                     accessToken = resp.access_token;
                     document.getElementById("gdrive-actions").style.display = "flex";
                     saveStatus.textContent = "Google Drive Connected";
+                } else {
+                    accessToken = "";
+                    document.getElementById("gdrive-actions").style.display = "none";
                 }
             }
         });
@@ -2613,12 +2626,8 @@ function decodeJwt(token) {
 function handleGoogleSignInCallback(response) {
     try {
         const payload = decodeJwt(response.credential);
-        
-        // Strictly verify domain hummel.se
-        const email = payload.email || "";
-        const hd = payload.hd || "";
-        
-        if (hd !== "hummel.se" && !email.endsWith("@hummel.se")) {
+
+        if (!isAllowedGoogleDomain(payload)) {
             alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
             signOutGoogle();
             return;
@@ -2638,7 +2647,7 @@ function handleGoogleSignInCallback(response) {
         
         // Request Drive Access Token next
         if (tokenClient) {
-            tokenClient.requestAccessToken({ prompt: 'consent' });
+            tokenClient.requestAccessToken({ prompt: 'consent', hint: payload.email });
         }
     } catch (e) {
         alert("Failed to sign in: " + e.message);
@@ -2646,6 +2655,7 @@ function handleGoogleSignInCallback(response) {
 }
 
 function signOutGoogle() {
+    const revokedEmail = userProfile && userProfile.email ? userProfile.email : "";
     userProfile = null;
     accessToken = "";
     
@@ -2656,8 +2666,8 @@ function signOutGoogle() {
     currentDriveFileId = null;
     
     // Revoke token if exists
-    if (userProfile && userProfile.email) {
-        google.accounts.id.revoke(userProfile.email, () => {});
+    if (revokedEmail) {
+        google.accounts.id.revoke(revokedEmail, () => {});
     }
 }
 
