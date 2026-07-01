@@ -114,6 +114,7 @@ function saveDefaultLineSettings() {
 const workspace = document.getElementById("workspace");
 const canvas = document.getElementById("canvas");
 const nodesContainer = document.getElementById("nodes-container");
+const lineHandlesLayer = document.getElementById("line-handles-layer");
 const svgOverlay = document.getElementById("svg-overlay");
 const zoomIndicator = document.getElementById("zoom-indicator");
 const docTitle = document.getElementById("doc-title");
@@ -546,11 +547,11 @@ function updateCanvasTransform() {
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
     // Escape properties selection on background click
-    if (selectedId && !e.target.closest(".node") && !e.target.closest(".properties-panel") && !e.target.closest(".topbar") && !e.target.closest(".sidebar") && !e.target.closest(".floating-controls") && !e.target.closest(".connector-line-overlay") && !e.target.closest(".line-end-handle")) {
+    if (selectedId && !e.target.closest(".node") && !e.target.closest(".properties-panel") && !e.target.closest(".topbar") && !e.target.closest(".sidebar") && !e.target.closest(".floating-controls") && !e.target.closest(".connector-line-overlay") && !e.target.closest(".line-end-handle-ui")) {
         selectElement(null);
     }
     
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle")) {
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui")) {
         return;
     }
     
@@ -1122,6 +1123,7 @@ function generateShapeSVG(node) {
 // --- Connector Lines rendering ---
 function renderConnectors() {
     svgOverlay.innerHTML = "";
+    if (lineHandlesLayer) lineHandlesLayer.innerHTML = "";
     
     // Defs markers Arrowheads
     svgOverlay.innerHTML = `
@@ -1205,13 +1207,13 @@ function renderConnectors() {
         });
         svgOverlay.appendChild(overlay);
 
-        if (selectedId === line.id && selectedType === "line") {
-            const fromHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            fromHandle.setAttribute("cx", fromCoords.x);
-            fromHandle.setAttribute("cy", fromCoords.y);
-            fromHandle.setAttribute("r", "8");
-            fromHandle.setAttribute("class", "line-end-handle");
+        if (selectedId === line.id && selectedType === "line" && lineHandlesLayer) {
+            const fromHandle = document.createElement("div");
+            fromHandle.className = "line-end-handle-ui";
+            fromHandle.style.left = `${fromCoords.x}px`;
+            fromHandle.style.top = `${fromCoords.y}px`;
             fromHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 selectElement(line.id, "line");
                 draggingNodeId = null;
@@ -1223,14 +1225,14 @@ function renderConnectors() {
                 lineEndSnapTarget = null;
                 document.body.classList.add("line-end-dragging");
             });
-            svgOverlay.appendChild(fromHandle);
+            lineHandlesLayer.appendChild(fromHandle);
 
-            const toHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            toHandle.setAttribute("cx", toCoords.x);
-            toHandle.setAttribute("cy", toCoords.y);
-            toHandle.setAttribute("r", "8");
-            toHandle.setAttribute("class", "line-end-handle");
+            const toHandle = document.createElement("div");
+            toHandle.className = "line-end-handle-ui";
+            toHandle.style.left = `${toCoords.x}px`;
+            toHandle.style.top = `${toCoords.y}px`;
             toHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 selectElement(line.id, "line");
                 draggingNodeId = null;
@@ -1242,7 +1244,7 @@ function renderConnectors() {
                 lineEndSnapTarget = null;
                 document.body.classList.add("line-end-dragging");
             });
-            svgOverlay.appendChild(toHandle);
+            lineHandlesLayer.appendChild(toHandle);
         }
     });
 

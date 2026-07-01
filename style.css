@@ -652,22 +652,28 @@ body.line-end-dragging .svg-connector-overlay {
     pointer-events: stroke;
 }
 
-.line-end-handle {
-    fill: #ffffff;
-    stroke: var(--accent-primary);
-    stroke-width: 2px;
+.line-end-handle-ui {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--accent-primary);
+    background: #ffffff;
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
     cursor: crosshair;
-    pointer-events: all;
-    transition: stroke-width var(--transition-fast), filter var(--transition-fast);
+    pointer-events: auto;
+    transition: border-width var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
-.line-end-handle:hover {
-    stroke-width: 3px;
-    filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.65));
+.line-end-handle-ui:hover {
+    border-width: 3px;
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.25);
 }
 
-.line-end-handle:active {
+.line-end-handle-ui:active {
     cursor: grabbing;
+    transform: translate(-50%, -50%) scale(1.05);
 }
 
 /* HTML Nodes Container */
@@ -679,6 +685,17 @@ body.line-end-dragging .svg-connector-overlay {
     height: 0;
     overflow: visible;
     z-index: 3;
+}
+
+.line-handles-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 8;
 }
 
 /* Node Styles */
