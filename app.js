@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "2026-07-01-pdf-colorvar-fix-1";
+const APP_BUILD = "2026-07-01-pdf-export-rewrite-1";
 
 // --- Application State ---
 let nodes = {};
@@ -91,30 +91,6 @@ let defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
 function resolveCssColorVar(varName, fallback) {
     const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
     return value || fallback;
-}
-
-function copyComputedStyles(sourceEl, targetEl) {
-    const computed = getComputedStyle(sourceEl);
-    for (let i = 0; i < computed.length; i++) {
-        const prop = computed[i];
-        targetEl.style.setProperty(prop, computed.getPropertyValue(prop), computed.getPropertyPriority(prop));
-    }
-}
-
-function inlineComputedStylesForClone(sourceRoot, targetRoot) {
-    copyComputedStyles(sourceRoot, targetRoot);
-
-    const sourceWalker = document.createTreeWalker(sourceRoot, NodeFilter.SHOW_ELEMENT);
-    const targetWalker = document.createTreeWalker(targetRoot, NodeFilter.SHOW_ELEMENT);
-
-    let sourceNode = sourceWalker.nextNode();
-    let targetNode = targetWalker.nextNode();
-
-    while (sourceNode && targetNode) {
-        copyComputedStyles(sourceNode, targetNode);
-        sourceNode = sourceWalker.nextNode();
-        targetNode = targetWalker.nextNode();
-    }
 }
 
 function loadDefaultLineSettings() {
@@ -3232,23 +3208,23 @@ async function getFlowchartCanvasImage() {
     viewportTransform.y = -minY + margin;
     updateCanvasTransform();
     
-    // 3. Invoke html2canvas on the canvas container
+    // 3. Render canvas using html-to-image (avoids html2canvas var() parsing issues)
     try {
-        const renderCanvas = await html2canvas(canvas, {
+        if (!window.htmlToImage || typeof window.htmlToImage.toPng !== "function") {
+            throw new Error("Image export library failed to load");
+        }
+
+        const outW = Math.max(1, Math.ceil(fitW));
+        const outH = Math.max(1, Math.ceil(fitH));
+        const imgData = await window.htmlToImage.toPng(canvas, {
+            cacheBust: true,
+            pixelRatio: 2,
             backgroundColor: resolveCssColorVar("--bg-app", "#f8fafc"),
-            width: fitW,
-            height: fitH,
-            scrollX: 0,
-            scrollY: 0,
-            useCORS: true,
-            onclone: (clonedDoc) => {
-                const clonedCanvas = clonedDoc.getElementById("canvas");
-                if (!clonedCanvas) return;
-
-                inlineComputedStylesForClone(canvas, clonedCanvas);
-
-                // Prevent html2canvas from parsing stylesheet var(...) expressions.
-                clonedDoc.querySelectorAll("style, link[rel='stylesheet']").forEach(el => el.remove());
+            width: outW,
+            height: outH,
+            style: {
+                width: `${outW}px`,
+                height: `${outH}px`
             }
         });
         
@@ -3265,9 +3241,9 @@ async function getFlowchartCanvasImage() {
         updateCanvasTransform();
         
         return {
-            imgData: renderCanvas.toDataURL("image/png"),
-            width: fitW,
-            height: fitH
+            imgData,
+            width: outW,
+            height: outH
         };
     } catch (e) {
         console.error("Canvas capture failed:", e);
