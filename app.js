@@ -171,6 +171,8 @@ const propLineSection = document.getElementById("prop-line-section");
 const propText = document.getElementById("prop-text");
 const propTextSize = document.getElementById("prop-text-size");
 const propUrl = document.getElementById("prop-url");
+const propNodeWidth = document.getElementById("prop-node-width");
+const propNodeHeight = document.getElementById("prop-node-height");
 const propBorderWidth = document.getElementById("prop-border-width");
 const propBorderStyle = document.getElementById("prop-border-style");
 const propLineType = document.getElementById("prop-line-type");
@@ -460,6 +462,8 @@ function setupEventListeners() {
     propText.addEventListener("input", updateSelectedNodeText);
     propTextSize.addEventListener("input", updateSelectedNodeTextSize);
     propUrl.addEventListener("input", updateSelectedNodeUrl);
+    propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
+    propNodeHeight.addEventListener("change", updateSelectedNodeHeight);
     propBorderWidth.addEventListener("change", updateSelectedNodeBorderWidth);
     propBorderStyle.addEventListener("change", updateSelectedNodeBorderStyle);
     
@@ -1311,6 +1315,8 @@ function updatePropertiesPanel() {
         propText.value = node.text;
         propTextSize.value = node.textSize || 14;
         propUrl.value = node.url || "";
+        propNodeWidth.value = Math.round(node.width || 120);
+        propNodeHeight.value = Math.round(node.height || 60);
         propBorderWidth.value = node.borderWidth;
         propBorderStyle.value = node.borderStyle;
         
@@ -1358,6 +1364,24 @@ function updateSelectedNodeTextSize() {
 function updateSelectedNodeUrl() {
     if (selectedType === "node" && nodes[selectedId]) {
         nodes[selectedId].url = propUrl.value.trim();
+        render();
+    }
+}
+
+function updateSelectedNodeWidth() {
+    if (selectedType === "node" && nodes[selectedId]) {
+        const width = Math.max(40, parseInt(propNodeWidth.value, 10) || nodes[selectedId].width || 120);
+        nodes[selectedId].width = snap(width);
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedNodeHeight() {
+    if (selectedType === "node" && nodes[selectedId]) {
+        const height = Math.max(30, parseInt(propNodeHeight.value, 10) || nodes[selectedId].height || 60);
+        nodes[selectedId].height = snap(height);
+        saveHistory();
         render();
     }
 }
@@ -1577,7 +1601,14 @@ function handleClipboardPaste(e) {
             const reader = new FileReader();
             reader.onload = function(evt) {
                 const base64 = evt.target.result;
-                addNewImageNode(base64);
+                const img = new Image();
+                img.onload = function() {
+                    addNewImageNode(base64, img.naturalWidth, img.naturalHeight);
+                };
+                img.onerror = function() {
+                    addNewImageNode(base64);
+                };
+                img.src = base64;
             };
             reader.readAsDataURL(file);
             e.preventDefault();
@@ -1586,22 +1617,32 @@ function handleClipboardPaste(e) {
     }
 }
 
-function addNewImageNode(base64) {
+function addNewImageNode(base64, naturalWidth = 0, naturalHeight = 0) {
     const id = "img_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     
     // Find viewport center in canvas space
     const rect = workspace.getBoundingClientRect();
     const center = screenToCanvas(rect.width / 2, rect.height / 2);
     
-    // Setup default image bounds
+    // Setup default image bounds while preserving source aspect ratio.
+    let width = 220;
+    let height = 160;
+    if (naturalWidth > 0 && naturalHeight > 0) {
+        const maxW = 520;
+        const maxH = 360;
+        const scale = Math.min(maxW / naturalWidth, maxH / naturalHeight, 1);
+        width = Math.max(80, Math.round(naturalWidth * scale));
+        height = Math.max(60, Math.round(naturalHeight * scale));
+    }
+
     nodes[id] = {
         id: id,
         type: "image",
         imageUrl: base64,
         x: snap(center.x),
         y: snap(center.y),
-        width: 200,
-        height: 150,
+        width: snap(width),
+        height: snap(height),
         text: "",
         textOffset: { x: 0, y: 0 },
         bgColor: "transparent",
