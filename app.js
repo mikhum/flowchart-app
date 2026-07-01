@@ -66,6 +66,38 @@ const BORDER_COLORS = [
     "#f59e0b", "#f43f5e", "#8b5cf6", "#d946ef", "#4f46e5", "#cbd5e1"
 ];
 
+const DEFAULT_LINE_SETTINGS_KEY = "flowcraft_default_line_settings";
+const DEFAULT_LINE_SETTINGS = {
+    lineType: "orthogonal",
+    lineStyle: "solid",
+    color: "#64748b",
+    thickness: 2.5,
+    hasArrow: "end"
+};
+let defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+
+function loadDefaultLineSettings() {
+    try {
+        const raw = localStorage.getItem(DEFAULT_LINE_SETTINGS_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return;
+        defaultLineSettings = {
+            lineType: parsed.lineType || DEFAULT_LINE_SETTINGS.lineType,
+            lineStyle: parsed.lineStyle || DEFAULT_LINE_SETTINGS.lineStyle,
+            color: parsed.color || DEFAULT_LINE_SETTINGS.color,
+            thickness: Number.isFinite(Number(parsed.thickness)) ? Number(parsed.thickness) : DEFAULT_LINE_SETTINGS.thickness,
+            hasArrow: parsed.hasArrow || DEFAULT_LINE_SETTINGS.hasArrow
+        };
+    } catch (err) {
+        defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+    }
+}
+
+function saveDefaultLineSettings() {
+    localStorage.setItem(DEFAULT_LINE_SETTINGS_KEY, JSON.stringify(defaultLineSettings));
+}
+
 // --- DOM References ---
 const workspace = document.getElementById("workspace");
 const canvas = document.getElementById("canvas");
@@ -136,11 +168,14 @@ const propLineType = document.getElementById("prop-line-type");
 const propLineStyle = document.getElementById("prop-line-style");
 const propLineWidth = document.getElementById("prop-line-width");
 const propLineArrows = document.getElementById("prop-line-arrows");
+const btnSetDefaultLine = document.getElementById("btn-set-default-line");
+const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
 const btnDeleteSelected = document.getElementById("btn-delete-selected");
 
 // --- Initialization ---
 function init() {
     console.info("FlowCraft build:", APP_BUILD);
+    loadDefaultLineSettings();
     setupEventListeners();
     setupColorPickers();
     loadLocalFilesList();
@@ -422,6 +457,8 @@ function setupEventListeners() {
     propLineStyle.addEventListener("change", updateSelectedLineStyle);
     propLineWidth.addEventListener("change", updateSelectedLineThickness);
     propLineArrows.addEventListener("change", updateSelectedLineArrows);
+    btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
+    btnResetDefaultLine.addEventListener("click", resetDefaultLineSettings);
     btnDeleteSelected.addEventListener("click", deleteSelectedElement);
     
     document.getElementById("btn-bring-front").addEventListener("click", bringToFront);
@@ -735,11 +772,11 @@ function createConnectorLine(fromId, fromPort, toId, toPort) {
         fromPort: fromPort,
         toId: toId,
         toPort: toPort,
-        lineType: "orthogonal",
-        lineStyle: "solid",
-        color: "#64748b",
-        thickness: 2.5,
-        hasArrow: "end"
+        lineType: defaultLineSettings.lineType,
+        lineStyle: defaultLineSettings.lineStyle,
+        color: defaultLineSettings.color,
+        thickness: defaultLineSettings.thickness,
+        hasArrow: defaultLineSettings.hasArrow
     });
     
     saveHistory();
@@ -1373,6 +1410,32 @@ function updateSelectedLineArrows() {
             render();
         }
     }
+}
+
+function setSelectedLineAsDefault() {
+    if (selectedType !== "line") {
+        alert("Select a line first.");
+        return;
+    }
+
+    const line = lines.find(l => l.id === selectedId);
+    if (!line) return;
+
+    defaultLineSettings = {
+        lineType: line.lineType || DEFAULT_LINE_SETTINGS.lineType,
+        lineStyle: line.lineStyle || DEFAULT_LINE_SETTINGS.lineStyle,
+        color: line.color || DEFAULT_LINE_SETTINGS.color,
+        thickness: Number.isFinite(Number(line.thickness)) ? Number(line.thickness) : DEFAULT_LINE_SETTINGS.thickness,
+        hasArrow: line.hasArrow || DEFAULT_LINE_SETTINGS.hasArrow
+    };
+    saveDefaultLineSettings();
+    saveStatus.textContent = "Default line updated";
+}
+
+function resetDefaultLineSettings() {
+    defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+    localStorage.removeItem(DEFAULT_LINE_SETTINGS_KEY);
+    saveStatus.textContent = "Default line reset";
 }
 
 function deleteSelectedElement() {
