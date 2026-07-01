@@ -568,6 +568,18 @@ function handleGlobalPointerMove(e) {
         viewportTransform.x = panOffset.x + dx;
         viewportTransform.y = panOffset.y + dy;
         updateCanvasTransform();
+    } else if (draggingLineEnd && draggingLineEnd.lineId) {
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        lineDrawingMousePos = coords;
+
+        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
+
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+        if (lineEndSnapTarget) {
+            const portEl = document.querySelector(`#node-${lineEndSnapTarget.nodeId} .port-${lineEndSnapTarget.portName}`);
+            if (portEl) portEl.classList.add("snapped");
+        }
+        renderConnectors();
     } else if (draggingNodeId && nodes[draggingNodeId]) {
         // Move shape node
         const coords = screenToCanvas(e.clientX, e.clientY);
@@ -635,18 +647,6 @@ function handleGlobalPointerMove(e) {
         // Check for snapping to other ports
         checkPortHoverSnap(coords.x, coords.y);
         renderConnectors();
-    } else if (draggingLineEnd && draggingLineEnd.lineId) {
-        const coords = screenToCanvas(e.clientX, e.clientY);
-        lineDrawingMousePos = coords;
-
-        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
-
-        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
-        if (lineEndSnapTarget) {
-            const portEl = document.querySelector(`#node-${lineEndSnapTarget.nodeId} .port-${lineEndSnapTarget.portName}`);
-            if (portEl) portEl.classList.add("snapped");
-        }
-        renderConnectors();
     }
 }
 
@@ -655,6 +655,26 @@ function handleGlobalPointerUp(e) {
         isPanning = false;
         canvas.classList.remove("grabbing");
         try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
+    } else if (draggingLineEnd) {
+        const line = lines.find(l => l.id === draggingLineEnd.lineId);
+        if (line && lineEndSnapTarget) {
+            if (draggingLineEnd.end === "from") {
+                line.fromId = lineEndSnapTarget.nodeId;
+                line.fromPort = lineEndSnapTarget.portName;
+            } else {
+                line.toId = lineEndSnapTarget.nodeId;
+                line.toPort = lineEndSnapTarget.portName;
+            }
+            saveHistory();
+            saveAutosave();
+        }
+
+        draggingLineEnd = null;
+        lineEndSnapTarget = null;
+        lineDrawingMousePos = null;
+        document.body.classList.remove("line-end-dragging");
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+        renderConnectors();
     } else if (draggingNodeId) {
         const didMove = dragStartNodePos.x !== nodes[draggingNodeId].x || dragStartNodePos.y !== nodes[draggingNodeId].y;
         draggingNodeId = null;
@@ -687,25 +707,6 @@ function handleGlobalPointerUp(e) {
         
         document.body.classList.remove("drawing-line");
         
-        renderConnectors();
-    } else if (draggingLineEnd) {
-        const line = lines.find(l => l.id === draggingLineEnd.lineId);
-        if (line && lineEndSnapTarget) {
-            if (draggingLineEnd.end === "from") {
-                line.fromId = lineEndSnapTarget.nodeId;
-                line.fromPort = lineEndSnapTarget.portName;
-            } else {
-                line.toId = lineEndSnapTarget.nodeId;
-                line.toPort = lineEndSnapTarget.portName;
-            }
-            saveHistory();
-            saveAutosave();
-        }
-
-        draggingLineEnd = null;
-        lineEndSnapTarget = null;
-        lineDrawingMousePos = null;
-        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
     }
 }
@@ -939,6 +940,7 @@ function render() {
             // Pointer Down for Selection & Dragging Shape
             nodeEl.addEventListener("pointerdown", (e) => {
                 if (e.target.classList.contains("port") || e.target.classList.contains("resize-handle")) return;
+                if (draggingLineEnd || document.body.classList.contains("line-end-dragging")) return;
                 e.stopPropagation();
                 selectElement(id, "node");
                 
@@ -1212,8 +1214,14 @@ function renderConnectors() {
             fromHandle.addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
                 selectElement(line.id, "line");
+                draggingNodeId = null;
+                resizingNodeId = null;
+                draggingTextNodeId = null;
+                activePortNodeId = null;
+                activePortName = null;
                 draggingLineEnd = { lineId: line.id, end: "from" };
                 lineEndSnapTarget = null;
+                document.body.classList.add("line-end-dragging");
             });
             svgOverlay.appendChild(fromHandle);
 
@@ -1225,8 +1233,14 @@ function renderConnectors() {
             toHandle.addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
                 selectElement(line.id, "line");
+                draggingNodeId = null;
+                resizingNodeId = null;
+                draggingTextNodeId = null;
+                activePortNodeId = null;
+                activePortName = null;
                 draggingLineEnd = { lineId: line.id, end: "to" };
                 lineEndSnapTarget = null;
+                document.body.classList.add("line-end-dragging");
             });
             svgOverlay.appendChild(toHandle);
         }

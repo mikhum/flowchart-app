@@ -892,6 +892,10 @@ body.line-edit-mode .port.snapped {
     transform: translate(-50%, -50%) scale(1.3) !important;
 }
 
+body.line-end-dragging .node {
+    pointer-events: none;
+}
+
 /* Selection bounding ring helper (for irregular shapes) */
 .node.selected::after {
     content: '';
