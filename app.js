@@ -209,6 +209,8 @@ const propLineWidth = document.getElementById("prop-line-width");
 const propLineArrows = document.getElementById("prop-line-arrows");
 const btnSetDefaultLine = document.getElementById("btn-set-default-line");
 const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
+const btnLineBringFront = document.getElementById("btn-line-bring-front");
+const btnLineSendBack = document.getElementById("btn-line-send-back");
 const btnDeleteSelected = document.getElementById("btn-delete-selected");
 
 // --- Initialization ---
@@ -513,6 +515,8 @@ function setupEventListeners() {
     propLineStyle.addEventListener("change", updateSelectedLineStyle);
     propLineWidth.addEventListener("change", updateSelectedLineThickness);
     propLineArrows.addEventListener("change", updateSelectedLineArrows);
+    btnLineBringFront.addEventListener("click", bringToFront);
+    btnLineSendBack.addEventListener("click", sendToBack);
     btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
     btnResetDefaultLine.addEventListener("click", resetDefaultLineSettings);
     btnDeleteSelected.addEventListener("click", deleteSelectedElement);
