@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "135a9e5";
+const APP_BUILD = "67a8519";
 
 // --- Application State ---
 let nodes = {};
