@@ -400,6 +400,7 @@ function selectLineColor(color) {
 function setupEventListeners() {
     // Zooming (Wheel)
     workspace.addEventListener("wheel", handleWheel, { passive: false });
+    workspace.addEventListener("contextmenu", handleWorkspaceContextMenu);
 
     // Workspace Panning & Click Off
     workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
@@ -645,8 +646,9 @@ function handleWorkspacePointerDown(e) {
         return;
     }
 
-    // Keep panning available with middle mouse button.
-    if (e.button === 1) {
+    // Keep panning available with middle or right mouse button.
+    if (e.button === 1 || e.button === 2) {
+        e.preventDefault();
         isPanning = true;
         canvas.classList.add("grabbing");
         panStart = { x: e.clientX, y: e.clientY };
@@ -667,6 +669,12 @@ function handleWorkspacePointerDown(e) {
     updateMarqueeBox();
     setMarqueeBoxVisibility(false);
     workspace.setPointerCapture(e.pointerId);
+}
+
+function handleWorkspaceContextMenu(e) {
+    if (e.target.closest(".canvas") || e.target.closest(".node") || e.target.closest(".svg-connector-overlay") || e.target.closest(".line-handles-layer")) {
+        e.preventDefault();
+    }
 }
 
 function handleGlobalPointerMove(e) {
