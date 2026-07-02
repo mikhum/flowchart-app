@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "2026-07-01-pdf-canvas-renderer-1";
+const APP_BUILD = "135a9e5";
 
 // --- Application State ---
 let nodes = {};
@@ -134,6 +134,7 @@ const marqueeSelectionBox = document.getElementById("marquee-selection-box");
 const zoomIndicator = document.getElementById("zoom-indicator");
 const docTitle = document.getElementById("doc-title");
 const saveStatus = document.getElementById("save-status");
+const buildId = document.getElementById("build-id");
 
 // Sidebars & Properties
 const sidebar = document.getElementById("sidebar");
@@ -213,6 +214,7 @@ const btnDeleteSelected = document.getElementById("btn-delete-selected");
 // --- Initialization ---
 function init() {
     console.info("FlowCraft build:", APP_BUILD);
+    if (buildId) buildId.textContent = `Commit ${APP_BUILD}`;
     loadDefaultLineSettings();
     setupEventListeners();
     setupColorPickers();
