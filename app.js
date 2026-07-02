@@ -129,6 +129,7 @@ const workspace = document.getElementById("workspace");
 const canvas = document.getElementById("canvas");
 const nodesContainer = document.getElementById("nodes-container");
 const lineHandlesLayer = document.getElementById("line-handles-layer");
+const nodeHandlesLayer = document.getElementById("node-handles-layer");
 const svgOverlay = document.getElementById("svg-overlay");
 const marqueeSelectionBox = document.getElementById("marquee-selection-box");
 const zoomIndicator = document.getElementById("zoom-indicator");
@@ -1064,6 +1065,8 @@ function render() {
         const id = el.id.replace("node-", "");
         if (!nodes[id]) el.remove();
     });
+
+    if (nodeHandlesLayer) nodeHandlesLayer.innerHTML = "";
     
     // Render/Update nodes
     Object.keys(nodes).forEach(id => {
@@ -1146,18 +1149,6 @@ function render() {
                 });
                 nodeEl.setPointerCapture(e.pointerId);
             });
-            
-            // Add resize handle
-            const resizeHandle = document.createElement("div");
-            resizeHandle.className = "resize-handle";
-            resizeHandle.addEventListener("pointerdown", (e) => {
-                e.stopPropagation();
-                resizingNodeId = id;
-                resizeStartMouse = { x: e.clientX, y: e.clientY };
-                resizeStartNodeSize = { width: node.width, height: node.height };
-                resizeHandle.setPointerCapture(e.pointerId);
-            });
-            nodeEl.appendChild(resizeHandle);
             
             nodesContainer.appendChild(nodeEl);
         }
@@ -1253,10 +1244,30 @@ function render() {
         } else if (linkIcon) {
             linkIcon.remove();
         }
+
+        renderNodeResizeHandle(node);
     });
     
     renderConnectors();
     saveAutosave();
+}
+
+function renderNodeResizeHandle(node) {
+    if (!nodeHandlesLayer || !node) return;
+    if (!(selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(node.id))) return;
+
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "resize-handle";
+    resizeHandle.style.left = `${node.x + node.width / 2 - 9}px`;
+    resizeHandle.style.top = `${node.y + node.height / 2 - 9}px`;
+    resizeHandle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        resizingNodeId = node.id;
+        resizeStartMouse = { x: e.clientX, y: e.clientY };
+        resizeStartNodeSize = { width: node.width, height: node.height };
+        resizeHandle.setPointerCapture(e.pointerId);
+    });
+    nodeHandlesLayer.appendChild(resizeHandle);
 }
 
 function generateShapeSVG(node) {
@@ -1321,6 +1332,7 @@ function generateShapeSVG(node) {
 function renderConnectors() {
     svgOverlay.innerHTML = "";
     if (lineHandlesLayer) lineHandlesLayer.innerHTML = "";
+    if (nodeHandlesLayer) nodeHandlesLayer.innerHTML = "";
     
     // Defs markers Arrowheads
     svgOverlay.innerHTML = `
@@ -1486,6 +1498,27 @@ function renderConnectors() {
         previewPath.setAttribute("marker-end", "url(#arrow-end-selected)");
         svgOverlay.appendChild(previewPath);
     }
+
+    renderNodeResizeHandles();
+}
+
+function renderNodeResizeHandles() {
+    if (!nodeHandlesLayer) return;
+    if (!(selectedType === "node" && selectedNodeIds.size === 1 && selectedId && nodes[selectedId])) return;
+
+    const node = nodes[selectedId];
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "resize-handle";
+    resizeHandle.style.left = `${node.x + node.width / 2 - 9}px`;
+    resizeHandle.style.top = `${node.y + node.height / 2 - 9}px`;
+    resizeHandle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        resizingNodeId = node.id;
+        resizeStartMouse = { x: e.clientX, y: e.clientY };
+        resizeStartNodeSize = { width: node.width, height: node.height };
+        resizeHandle.setPointerCapture(e.pointerId);
+    });
+    nodeHandlesLayer.appendChild(resizeHandle);
 }
 
 function getPortVectorOffset(portName, offset) {

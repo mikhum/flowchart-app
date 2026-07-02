@@ -705,6 +705,17 @@ body.line-end-dragging .svg-connector-overlay {
     z-index: 8;
 }
 
+.node-handles-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+    z-index: 9;
+}
+
 /* Node Styles */
 .node {
     position: absolute;
@@ -851,6 +862,11 @@ body.line-end-dragging .svg-connector-overlay {
     cursor: nwse-resize;
     z-index: 5;
     display: none;
+}
+
+.node-handles-layer .resize-handle {
+    display: block;
+    pointer-events: auto;
 }
 
 .node.selected .resize-handle {
