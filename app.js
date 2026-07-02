@@ -17,8 +17,6 @@ let viewportTransform = { x: 0, y: 0, scale: 1 };
 let isPanning = false;
 let panStart = { x: 0, y: 0 };
 let panOffset = { x: 0, y: 0 };
-let panPointerButton = null;
-let panMoved = false;
 let isMarqueeSelecting = false;
 let marqueeStartMouse = { x: 0, y: 0 };
 let marqueeStartCanvas = { x: 0, y: 0 };
@@ -399,7 +397,6 @@ function selectLineColor(color) {
 function setupEventListeners() {
     // Zooming (Wheel)
     workspace.addEventListener("wheel", handleWheel, { passive: false });
-    workspace.addEventListener("contextmenu", handleWorkspaceContextMenu);
 
     // Workspace Panning & Click Off
     workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
@@ -640,15 +637,13 @@ function updateMarqueeSelection() {
 
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
-    const isPanButton = e.button === 1 || e.button === 2;
-    if (isPanButton) {
-        if (e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".topbar")) {
-            return;
-        }
-        e.preventDefault();
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui")) {
+        return;
+    }
+
+    // Keep panning available with middle mouse button.
+    if (e.button === 1) {
         isPanning = true;
-        panPointerButton = e.button;
-        panMoved = false;
         canvas.classList.add("grabbing");
         panStart = { x: e.clientX, y: e.clientY };
         panOffset = { x: viewportTransform.x, y: viewportTransform.y };
@@ -657,10 +652,6 @@ function handleWorkspacePointerDown(e) {
     }
 
     if (e.button !== 0) return;
-
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-end-hit-target") || e.target.closest(".line-handles-layer")) {
-        return;
-    }
 
     marqueeAdditive = e.ctrlKey || e.metaKey || e.shiftKey;
     marqueeBaseSelection = marqueeAdditive ? new Set(selectedNodeIds) : new Set();
@@ -674,21 +665,12 @@ function handleWorkspacePointerDown(e) {
     workspace.setPointerCapture(e.pointerId);
 }
 
-function handleWorkspaceContextMenu(e) {
-    if (e.target.closest(".canvas") || e.target.closest(".node") || e.target.closest(".svg-connector-overlay") || e.target.closest(".line-handles-layer")) {
-        e.preventDefault();
-    }
-}
-
 function handleGlobalPointerMove(e) {
     if (isPanning) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
         viewportTransform.x = panOffset.x + dx;
         viewportTransform.y = panOffset.y + dy;
-        if (!panMoved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
-            panMoved = true;
-        }
         updateCanvasTransform();
     } else if (isMarqueeSelecting) {
         marqueeCurrentCanvas = screenToCanvas(e.clientX, e.clientY);
@@ -706,7 +688,7 @@ function handleGlobalPointerMove(e) {
         const coords = screenToCanvas(e.clientX, e.clientY);
         lineDrawingMousePos = coords;
 
-        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 40);
+        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
 
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         if (lineEndSnapTarget) {
@@ -795,8 +777,6 @@ function handleGlobalPointerMove(e) {
 function handleGlobalPointerUp(e) {
     if (isPanning) {
         isPanning = false;
-        panPointerButton = null;
-        panMoved = false;
         canvas.classList.remove("grabbing");
         try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
     } else if (isMarqueeSelecting) {
@@ -829,7 +809,6 @@ function handleGlobalPointerUp(e) {
         lineEndSnapTarget = null;
         lineDrawingMousePos = null;
         document.body.classList.remove("line-end-dragging");
-        try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
     } else if (draggingNodeId) {
@@ -906,9 +885,31 @@ function handleCanvasDrop(e) {
     e.preventDefault();
     const shapeType = e.dataTransfer.getData("application/x-flowcraft-shape") || e.dataTransfer.getData("text/plain");
     if (!LIBRARY_SHAPE_TYPES.has(shapeType)) return;
+
+    // Reset transient pointer modes to avoid stale interaction locks after DnD.
+    resetTransientInteractions();
     
     const coords = screenToCanvas(e.clientX, e.clientY);
     addNewShapeNode(shapeType, snap(coords.x), snap(coords.y));
+}
+
+function resetTransientInteractions() {
+    isPanning = false;
+    isMarqueeSelecting = false;
+    marqueeMoved = false;
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    hoveredPortNodeId = null;
+    hoveredPortName = null;
+    lineDrawingMousePos = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+    setMarqueeBoxVisibility(false);
+    document.body.classList.remove("drawing-line", "line-end-dragging");
+    document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
 }
 
 function addNewShapeNode(shapeType, x, y) {
@@ -1064,7 +1065,6 @@ function render() {
                 const portEl = document.createElement("div");
                 portEl.className = `port port-${p}`;
                 portEl.addEventListener("pointerdown", (e) => {
-                    if (e.button !== 0) return;
                     e.stopPropagation();
                     e.preventDefault(); // Prevent text selection and browser drag-cancellation
                     activePortNodeId = id;
@@ -1085,8 +1085,8 @@ function render() {
             
             // Drag handle to move text offset
             textContainer.addEventListener("pointerdown", (e) => {
-                if (e.button !== 0) return;
-                if (selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(id)) {
+                // Text offset dragging is explicit so normal drag still moves the node.
+                if (e.altKey && selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(id)) {
                     e.stopPropagation();
                     draggingTextNodeId = id;
                     dragStartMouse = { x: e.clientX, y: e.clientY };
@@ -1105,7 +1105,6 @@ function render() {
             
             // Pointer Down for Selection & Dragging Shape
             nodeEl.addEventListener("pointerdown", (e) => {
-                if (e.button !== 0) return;
                 if (e.target.classList.contains("port") || e.target.classList.contains("resize-handle")) return;
                 if (draggingLineEnd || document.body.classList.contains("line-end-dragging")) return;
                 e.stopPropagation();
@@ -1135,7 +1134,6 @@ function render() {
             const resizeHandle = document.createElement("div");
             resizeHandle.className = "resize-handle";
             resizeHandle.addEventListener("pointerdown", (e) => {
-                if (e.button !== 0) return;
                 e.stopPropagation();
                 resizingNodeId = id;
                 resizeStartMouse = { x: e.clientX, y: e.clientY };
@@ -1359,7 +1357,6 @@ function renderConnectors() {
         path.style.stroke = selectedId === line.id && selectedType === "line" ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
@@ -1384,14 +1381,13 @@ function renderConnectors() {
         overlay.setAttribute("d", pathD);
         overlay.setAttribute("class", "connector-line-overlay");
         overlay.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
         svgOverlay.appendChild(overlay);
 
         if (selectedId === line.id && selectedType === "line" && lineHandlesLayer) {
-            const beginLineEndDrag = (end, pointerEvent = null) => {
+            const beginLineEndDrag = (end) => {
                 selectElement(line.id, "line");
                 draggingNodeId = null;
                 resizingNodeId = null;
@@ -1400,12 +1396,7 @@ function renderConnectors() {
                 activePortName = null;
                 draggingLineEnd = { lineId: line.id, end };
                 lineEndSnapTarget = null;
-                const startCoords = end === "from" ? fromCoords : toCoords;
-                lineDrawingMousePos = { x: startCoords.x, y: startCoords.y };
                 document.body.classList.add("line-end-dragging");
-                if (pointerEvent) {
-                    try { workspace.setPointerCapture(pointerEvent.pointerId); } catch(err) {}
-                }
             };
 
             const fromHandle = document.createElement("div");
@@ -1415,7 +1406,7 @@ function renderConnectors() {
             fromHandle.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("from", e);
+                beginLineEndDrag("from");
             });
             lineHandlesLayer.appendChild(fromHandle);
 
@@ -1426,7 +1417,7 @@ function renderConnectors() {
             toHandle.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("to", e);
+                beginLineEndDrag("to");
             });
             lineHandlesLayer.appendChild(toHandle);
 
@@ -1439,7 +1430,7 @@ function renderConnectors() {
             fromHit.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("from", e);
+                beginLineEndDrag("from");
             });
             svgOverlay.appendChild(fromHit);
 
@@ -1451,7 +1442,7 @@ function renderConnectors() {
             toHit.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                beginLineEndDrag("to", e);
+                beginLineEndDrag("to");
             });
             svgOverlay.appendChild(toHit);
         }
