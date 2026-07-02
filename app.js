@@ -191,6 +191,7 @@ const propLineSection = document.getElementById("prop-line-section");
 const propText = document.getElementById("prop-text");
 const propTextSize = document.getElementById("prop-text-size");
 const propUrl = document.getElementById("prop-url");
+const propTextPosition = document.getElementById("prop-text-position");
 const propNodeWidth = document.getElementById("prop-node-width");
 const propNodeHeight = document.getElementById("prop-node-height");
 const propImageCropGroup = document.getElementById("prop-image-crop-group");
@@ -494,6 +495,7 @@ function setupEventListeners() {
     propText.addEventListener("input", updateSelectedNodeText);
     propTextSize.addEventListener("input", updateSelectedNodeTextSize);
     propUrl.addEventListener("input", updateSelectedNodeUrl);
+    propTextPosition.addEventListener("change", updateSelectedNodeTextPosition);
     propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
     propNodeHeight.addEventListener("change", updateSelectedNodeHeight);
     propCropLeft.addEventListener("input", updateSelectedNodeCrop);
@@ -932,6 +934,7 @@ function addNewShapeNode(shapeType, x, y) {
         borderColor: isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b"),
         borderWidth: isTextBox ? 0 : (isStickyNote ? 1 : 2),
         borderStyle: "solid",
+        textPosition: "center",
         url: ""
     };
     
@@ -1215,6 +1218,7 @@ function render() {
         const textContainer = nodeEl.querySelector(".node-text-container");
         if (textContainer) {
             textContainer.style.transform = `translate(${node.textOffset.x}px, ${node.textOffset.y}px)`;
+            applyTextPositionStyles(textContainer, textSpan, node.textPosition);
         }
         
         // URL Link indicator icon
@@ -1645,6 +1649,7 @@ function updatePropertiesPanel() {
         propText.value = node.text;
         propTextSize.value = node.textSize || 14;
         propUrl.value = node.url || "";
+        propTextPosition.value = node.textPosition || "center";
         propNodeWidth.value = Math.round(node.width || 120);
         propNodeHeight.value = Math.round(node.height || 60);
         const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
@@ -1699,6 +1704,18 @@ function updateSelectedNodeTextSize() {
         selectedNodeIds.forEach(nodeId => {
             if (nodes[nodeId]) nodes[nodeId].textSize = textSize;
         });
+        render();
+    }
+}
+
+function updateSelectedNodeTextPosition() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const position = propTextPosition.value || "center";
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].textPosition = position;
+        });
+        saveHistory();
+        saveAutosave();
         render();
     }
 }
@@ -3590,17 +3607,77 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
     const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
     const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
     const lineHeight = textSize * 1.25;
+    const placement = getTextPlacementConfig(node.textPosition);
+    const paddingX = Math.max(8, Math.round(textSize * 0.7));
+    const paddingY = Math.max(8, Math.round(textSize * 0.6));
     const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
-    const startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8 + offsetY;
+    const contentWidth = Math.max(0, w - paddingX * 2);
+    const contentHeight = Math.max(0, h - paddingY * 2);
+
+    let anchorX = x + w / 2;
+    let anchorY = y + h / 2;
+
+    if (placement.horizontal === "left") anchorX = x + paddingX;
+    if (placement.horizontal === "right") anchorX = x + w - paddingX;
+    if (placement.vertical === "top") anchorY = y + paddingY;
+    if (placement.vertical === "bottom") anchorY = y + h - paddingY;
+
+    let startY = anchorY + lineHeight * 0.8;
+    if (placement.vertical === "center") {
+        startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
+    } else if (placement.vertical === "top") {
+        startY = y + paddingY + lineHeight * 0.8;
+    } else if (placement.vertical === "bottom") {
+        startY = y + h - paddingY - totalHeight + lineHeight * 0.8;
+    }
+
+    if (placement.vertical === "center" && placement.horizontal === "left") {
+        startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
+    }
 
     ctx.fillStyle = getNodeTextColor(node);
-    ctx.textAlign = "center";
+    ctx.textAlign = placement.textAlign;
     ctx.textBaseline = "alphabetic";
     ctx.font = `${textSize}px Inter, Arial, sans-serif`;
 
     linesText.forEach((line, index) => {
-        ctx.fillText(line, x + w / 2 + offsetX, startY + index * lineHeight);
+        let drawX = anchorX + offsetX;
+        if (placement.horizontal === "left") drawX = x + paddingX + offsetX;
+        if (placement.horizontal === "right") drawX = x + w - paddingX + offsetX;
+        if (placement.horizontal === "center") drawX = x + w / 2 + offsetX;
+        ctx.fillText(line, drawX, startY + index * lineHeight + offsetY);
     });
+}
+
+function getTextPlacementConfig(textPosition) {
+    switch (textPosition) {
+        case "top-left":
+            return { horizontal: "left", vertical: "top", textAlign: "left" };
+        case "top-right":
+            return { horizontal: "right", vertical: "top", textAlign: "right" };
+        case "bottom-left":
+            return { horizontal: "left", vertical: "bottom", textAlign: "left" };
+        case "bottom-right":
+            return { horizontal: "right", vertical: "bottom", textAlign: "right" };
+        case "top":
+            return { horizontal: "center", vertical: "top", textAlign: "center" };
+        case "bottom":
+            return { horizontal: "center", vertical: "bottom", textAlign: "center" };
+        case "left":
+            return { horizontal: "left", vertical: "center", textAlign: "left" };
+        case "right":
+            return { horizontal: "right", vertical: "center", textAlign: "right" };
+        case "center":
+        default:
+            return { horizontal: "center", vertical: "center", textAlign: "center" };
+    }
+}
+
+function applyTextPositionStyles(textContainer, textSpan, textPosition) {
+    const placement = getTextPlacementConfig(textPosition);
+    textContainer.style.justifyContent = placement.horizontal === "left" ? "flex-start" : placement.horizontal === "right" ? "flex-end" : "center";
+    textContainer.style.alignItems = placement.vertical === "top" ? "flex-start" : placement.vertical === "bottom" ? "flex-end" : "center";
+    textSpan.style.textAlign = placement.textAlign;
 }
 
 function drawLineOnCanvas(ctx, line) {
