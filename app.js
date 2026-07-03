@@ -58,6 +58,7 @@ const GRID_SIZE = 20;
 let currentDocName = "Untitled Flowchart";
 let currentLocalSaveName = "";
 let currentDriveFileId = null; // Google Drive File ID
+let jsonExportFileHandle = null;
 
 // Google OAuth & GIS States
 const configuredGoogleClientId = (
@@ -2435,6 +2436,7 @@ function handleNewFlowchart() {
 
 // --- Local browser saves manager ---
 function handleSaveLocal() {
+    const isFirstLocalSave = !currentLocalSaveName;
     const name = prompt("Enter a workspace name for this flowchart:", currentLocalSaveName || currentDocName);
     if (name === null) return;
     
@@ -2455,6 +2457,13 @@ function handleSaveLocal() {
     saveStatus.textContent = "Saved locally";
     loadLocalFilesList();
     alert(`Project "${trimmed}" saved locally!`);
+
+    if (isFirstLocalSave) {
+        const shouldDownload = confirm("Do you want to choose a save location and export this as a JSON file now?");
+        if (shouldDownload) {
+            exportJsonFile({ forcePrompt: true });
+        }
+    }
 }
 
 function loadLocalSave(name) {
@@ -3226,20 +3235,59 @@ function convertLucidchartLikeData(rawData) {
     };
 }
 
-function exportJsonFile() {
-    const exportData = {
+function getExportPayload() {
+    return {
         format: "flowcraft",
         version: "1.0",
         name: currentDocName,
         nodes: nodes,
         lines: lines
     };
-    
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+}
+
+function getSafeExportFilename() {
+    return currentDocName.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".flowchart";
+}
+
+async function exportJsonFile(options = {}) {
+    const forcePrompt = !!options.forcePrompt;
+    const serialized = JSON.stringify(getExportPayload(), null, 2);
+    const filename = getSafeExportFilename();
+
+    if (typeof window.showSaveFilePicker === "function") {
+        try {
+            if (!jsonExportFileHandle || forcePrompt) {
+                jsonExportFileHandle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                        description: "Flowchart JSON",
+                        accept: {
+                            "application/json": [".flowchart", ".json"]
+                        }
+                    }]
+                });
+            }
+
+            const writable = await jsonExportFileHandle.createWritable();
+            await writable.write(serialized);
+            await writable.close();
+            saveStatus.textContent = "JSON saved";
+            return;
+        } catch (err) {
+            if (err && err.name === "AbortError") {
+                saveStatus.textContent = "Export cancelled";
+                return;
+            }
+            jsonExportFileHandle = null;
+        }
+    }
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(serialized);
     const a = document.createElement("a");
     a.href = dataStr;
-    a.download = currentDocName.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".flowchart";
+    a.download = filename;
     a.click();
+    saveStatus.textContent = "Export complete";
 }
 
 async function importJsonFile(e) {
@@ -3438,13 +3486,7 @@ async function saveToGoogleDrive() {
         return;
     }
     
-    const flowchartData = {
-        format: "flowcraft",
-        version: "1.0",
-        name: currentDocName,
-        nodes: nodes,
-        lines: lines
-    };
+    const flowchartData = getExportPayload();
     
     const fileContent = JSON.stringify(flowchartData, null, 2);
     const filename = currentDocName + ".flowchart";
@@ -3559,14 +3601,61 @@ async function openGoogleDriveExplorer() {
             const loadIcon = document.createElement("i");
             loadIcon.className = "fa-solid fa-cloud-arrow-down";
             loadIcon.style.color = resolveCssColorVar("--accent-primary", "#0ea5e9");
+
+            const actions = document.createElement("div");
+            actions.className = "gdrive-file-actions";
+
+            const trashBtn = document.createElement("button");
+            trashBtn.className = "gdrive-file-trash-btn";
+            trashBtn.title = "Move to Drive trash";
+            trashBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+            trashBtn.addEventListener("click", (e) => trashGoogleDriveFile(file.id, file.name, e));
+
+            actions.appendChild(loadIcon);
+            actions.appendChild(trashBtn);
             
             item.appendChild(info);
-            item.appendChild(loadIcon);
+            item.appendChild(actions);
             gdriveFilesContainer.appendChild(item);
         });
     } catch(e) {
         const errorColor = resolveCssColorVar("--accent-danger", "#ef4444");
         gdriveFilesContainer.innerHTML = `<div class="empty-state" style="color: ${errorColor}">Error loading files: ${e.message}</div>`;
+    }
+}
+
+async function trashGoogleDriveFile(fileId, fileName, event) {
+    event.stopPropagation();
+
+    if (!accessToken) {
+        alert("Google session expired. Please sign in again.");
+        return;
+    }
+
+    const confirmed = confirm(`Move "${fileName}" to Google Drive trash?`);
+    if (!confirmed) return;
+
+    try {
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+        const response = await fetch(url, {
+            method: "PATCH",
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ trashed: true })
+        });
+
+        if (!response.ok) throw new Error("HTTP error " + response.status);
+
+        if (currentDriveFileId === fileId) {
+            currentDriveFileId = null;
+        }
+
+        saveStatus.textContent = "Moved to Drive trash";
+        await openGoogleDriveExplorer();
+    } catch (err) {
+        alert("Could not move file to Google Drive trash: " + err.message);
     }
 }
 
@@ -3937,8 +4026,6 @@ async function getFlowchartCanvasImage() {
     ctx.save();
     ctx.translate(-originX, -originY);
 
-    lines.forEach(line => drawLineOnCanvas(ctx, line));
-
     const orderedNodes = Object.values(nodes).slice().sort((a, b) => (a.zIndex || 10) - (b.zIndex || 10));
     const imageNodes = orderedNodes.filter(n => n.type === "image");
     const loadedImages = await Promise.all(imageNodes.map(n => loadImageElement(n.imageUrl)));
@@ -4010,6 +4097,9 @@ async function getFlowchartCanvasImage() {
 
         drawNodeLabel(ctx, node, x, y, w, h);
     });
+
+    // Match on-canvas behavior where connectors render above node shapes.
+    lines.forEach(line => drawLineOnCanvas(ctx, line));
 
     ctx.restore();
 

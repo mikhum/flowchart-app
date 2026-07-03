@@ -1338,6 +1338,32 @@ body.line-end-dragging .node {
     color: var(--text-muted);
 }
 
+.gdrive-file-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.gdrive-file-trash-btn {
+    border: 1px solid var(--border-color);
+    background: #ffffff;
+    color: var(--text-muted);
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gdrive-file-trash-btn:hover {
+    color: var(--accent-danger);
+    border-color: var(--accent-danger);
+    background: #fef2f2;
+}
+
 /* Keyboard Help Shortcuts */
 .shortcuts-grid {
     display: flex;
