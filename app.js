@@ -3895,17 +3895,23 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
 
 function drawNodeLabel(ctx, node, x, y, w, h) {
     if (node.type === "image") return;
-    const linesText = String(node.text || "").split("\n");
+    const rawLines = String(node.text || "").split("\n");
     const textSize = Number(node.textSize) || 14;
     const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
     const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
-    const lineHeight = textSize * 1.25;
+    const lineHeight = textSize * 1.3;
     const placement = getTextPlacementConfig(node.textPosition);
     const paddingX = Math.max(8, Math.round(textSize * 0.7));
     const paddingY = Math.max(8, Math.round(textSize * 0.6));
-    const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
     const contentWidth = Math.max(0, w - paddingX * 2);
-    const contentHeight = Math.max(0, h - paddingY * 2);
+
+    ctx.fillStyle = getNodeTextColor(node);
+    ctx.textAlign = placement.textAlign;
+    ctx.textBaseline = "alphabetic";
+    ctx.font = `${textSize}px Inter, Arial, sans-serif`;
+
+    const linesText = wrapTextForCanvas(ctx, rawLines, contentWidth);
+    const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
 
     let anchorX = x + w / 2;
     let anchorY = y + h / 2;
@@ -3928,11 +3934,6 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
         startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
     }
 
-    ctx.fillStyle = getNodeTextColor(node);
-    ctx.textAlign = placement.textAlign;
-    ctx.textBaseline = "alphabetic";
-    ctx.font = `${textSize}px Inter, Arial, sans-serif`;
-
     linesText.forEach((line, index) => {
         let drawX = anchorX + offsetX;
         if (placement.horizontal === "left") drawX = x + paddingX + offsetX;
@@ -3940,6 +3941,55 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
         if (placement.horizontal === "center") drawX = x + w / 2 + offsetX;
         ctx.fillText(line, drawX, startY + index * lineHeight + offsetY);
     });
+}
+
+function wrapTextForCanvas(ctx, rawLines, maxWidth) {
+    if (!Array.isArray(rawLines) || rawLines.length === 0) return [""];
+    if (!Number.isFinite(maxWidth) || maxWidth <= 0) return rawLines.length ? rawLines : [""];
+
+    const wrapped = [];
+
+    rawLines.forEach((sourceLine) => {
+        const line = String(sourceLine || "");
+        if (!line.trim()) {
+            wrapped.push("");
+            return;
+        }
+
+        let current = "";
+        const words = line.split(/\s+/).filter(Boolean);
+
+        words.forEach((word) => {
+            const candidate = current ? `${current} ${word}` : word;
+            if (ctx.measureText(candidate).width <= maxWidth) {
+                current = candidate;
+                return;
+            }
+
+            if (current) wrapped.push(current);
+
+            // Break long unspaced words to match CSS break-word behavior.
+            if (ctx.measureText(word).width > maxWidth) {
+                let chunk = "";
+                for (const ch of word) {
+                    const nextChunk = chunk + ch;
+                    if (ctx.measureText(nextChunk).width <= maxWidth || !chunk) {
+                        chunk = nextChunk;
+                    } else {
+                        wrapped.push(chunk);
+                        chunk = ch;
+                    }
+                }
+                current = chunk;
+            } else {
+                current = word;
+            }
+        });
+
+        wrapped.push(current);
+    });
+
+    return wrapped.length ? wrapped : [""];
 }
 
 function getTextPlacementConfig(textPosition) {
