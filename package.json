@@ -4,7 +4,8 @@
   "description": "A premium web-based flowchart app with Google Drive integration, custom shapes, image paste, and Word/PDF export.",
   "main": "index.html",
   "scripts": {
-    "dev": "npx -y http-server -p 3000 -c-1"
+    "build:meta": "node scripts/write-build-info.js",
+    "dev": "npm run build:meta && npx -y http-server -p 3000 -c-1"
   },
   "keywords": [
     "flowchart",
