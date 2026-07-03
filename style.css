@@ -629,7 +629,7 @@ body.line-end-dragging .svg-connector-overlay {
     stroke-linecap: round;
     stroke-linejoin: round;
     transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
-    pointer-events: none;
+    pointer-events: stroke;
 }
 
 .connector-line.selected {
@@ -649,6 +649,11 @@ body.line-end-dragging .svg-connector-overlay {
     stroke: transparent;
     stroke-width: 12px;
     cursor: pointer;
+    pointer-events: none;
+}
+
+body.line-edit-mode .connector-line-overlay,
+body.line-end-dragging .connector-line-overlay {
     pointer-events: stroke;
 }
 

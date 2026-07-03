@@ -409,6 +409,11 @@ function setupEventListeners() {
     workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
     window.addEventListener("pointermove", handleGlobalPointerMove);
     window.addEventListener("pointerup", handleGlobalPointerUp);
+    window.addEventListener("pointercancel", handleGlobalPointerUp);
+    window.addEventListener("blur", handleGlobalPointerAbort);
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) handleGlobalPointerAbort();
+    });
     
     // Drag and Drop from Sidebar Library
     const paletteItems = document.querySelectorAll(".palette-item");
@@ -682,7 +687,22 @@ function handleWorkspaceContextMenu(e) {
     }
 }
 
+function hasActivePointerInteraction() {
+    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
+}
+
+function handleGlobalPointerAbort() {
+    if (!hasActivePointerInteraction()) return;
+    handleGlobalPointerUp({ pointerId: -1 });
+}
+
 function handleGlobalPointerMove(e) {
+    // Failsafe release when pointerup happens outside app/window and is missed.
+    if (hasActivePointerInteraction() && e.buttons === 0) {
+        handleGlobalPointerUp(e);
+        return;
+    }
+
     if (isPanning) {
         const dx = e.clientX - panStart.x;
         const dy = e.clientY - panStart.y;
@@ -1387,6 +1407,7 @@ function renderConnectors() {
         path.style.stroke = selectedId === line.id && selectedType === "line" ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
+            if (tryStartNodeDragFromPointer(e)) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
@@ -1411,6 +1432,7 @@ function renderConnectors() {
         overlay.setAttribute("d", pathD);
         overlay.setAttribute("class", "connector-line-overlay");
         overlay.addEventListener("pointerdown", (e) => {
+            if (tryStartNodeDragFromPointer(e)) return;
             e.stopPropagation();
             selectElement(line.id, "line");
         });
@@ -1500,6 +1522,41 @@ function renderConnectors() {
     }
 
     renderNodeResizeHandles();
+}
+
+function tryStartNodeDragFromPointer(e) {
+    const stack = document.elementsFromPoint(e.clientX, e.clientY);
+    const nodeEl = stack.find(el => el && el.classList && el.classList.contains("node"));
+    if (!nodeEl) return false;
+
+    const id = String(nodeEl.id || "").replace("node-", "");
+    if (!id || !nodes[id] || draggingLineEnd || document.body.classList.contains("line-end-dragging")) {
+        return false;
+    }
+
+    e.stopPropagation();
+
+    const isToggleSelection = e.ctrlKey || e.metaKey;
+    if (isToggleSelection) {
+        selectElement(id, "node", { toggle: true });
+        if (!selectedNodeIds.has(id)) return true;
+    } else if (!(selectedType === "node" && selectedNodeIds.has(id))) {
+        selectElement(id, "node");
+    }
+
+    draggingNodeId = id;
+    dragStartMouse = { x: e.clientX, y: e.clientY };
+    dragStartNodePositions = {};
+    const dragTargets = (selectedType === "node" && selectedNodeIds.size > 0)
+        ? Array.from(selectedNodeIds)
+        : [id];
+    dragTargets.forEach(nodeId => {
+        if (!nodes[nodeId]) return;
+        dragStartNodePositions[nodeId] = { x: nodes[nodeId].x, y: nodes[nodeId].y };
+    });
+
+    try { nodeEl.setPointerCapture(e.pointerId); } catch (err) {}
+    return true;
 }
 
 function renderNodeResizeHandles() {
@@ -1986,6 +2043,8 @@ function deleteLine(lineId) {
 }
 
 function bringToFront() {
+    if (hasActivePointerInteraction()) handleGlobalPointerAbort();
+
     if (selectedType === "node" && selectedNodeIds.size > 0) {
         let maxZ = 10;
         Object.values(nodes).forEach(n => {
@@ -2018,6 +2077,8 @@ function bringToFront() {
 }
 
 function sendToBack() {
+    if (hasActivePointerInteraction()) handleGlobalPointerAbort();
+
     if (selectedType === "node" && selectedNodeIds.size > 0) {
         let minZ = 10;
         Object.values(nodes).forEach(n => {
