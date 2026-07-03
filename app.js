@@ -1,5 +1,6 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "e90d827";
+const APP_BUILD = "local-dev";
+const BUILD_INFO_PATH = "build-info.json";
 
 // --- Application State ---
 let nodes = {};
@@ -59,7 +60,11 @@ let currentLocalSaveName = "";
 let currentDriveFileId = null; // Google Drive File ID
 
 // Google OAuth & GIS States
-let googleClientId = localStorage.getItem("flowcraft_google_client_id") || "";
+const configuredGoogleClientId = (
+    window.FLOWCRAFT_CONFIG &&
+    typeof window.FLOWCRAFT_CONFIG.googleClientId === "string"
+) ? window.FLOWCRAFT_CONFIG.googleClientId.trim() : "";
+let googleClientId = localStorage.getItem("flowcraft_google_client_id") || configuredGoogleClientId || "";
 let accessToken = "";
 let userProfile = null;
 let tokenClient = null;
@@ -215,9 +220,35 @@ const btnLineSendBack = document.getElementById("btn-line-send-back");
 const btnDeleteSelected = document.getElementById("btn-delete-selected");
 
 // --- Initialization ---
-function init() {
+function setBuildBadgeLabel(label) {
+    if (buildId) buildId.textContent = label;
+}
+
+async function updateBuildBadge() {
+    setBuildBadgeLabel(`Commit ${APP_BUILD}`);
+
+    try {
+        const response = await fetch(`${BUILD_INFO_PATH}?v=${encodeURIComponent(APP_BUILD)}`, {
+            cache: "no-store"
+        });
+        if (!response.ok) return;
+
+        const buildInfo = await response.json();
+        const shortSha = typeof buildInfo?.shortSha === "string" ? buildInfo.shortSha.trim() : "";
+        if (!shortSha) return;
+
+        setBuildBadgeLabel(`Commit ${shortSha}`);
+        console.info("FlowCraft build:", shortSha);
+        return;
+    } catch (err) {
+        console.warn("Unable to load build metadata.", err);
+    }
+
     console.info("FlowCraft build:", APP_BUILD);
-    if (buildId) buildId.textContent = `Commit ${APP_BUILD}`;
+}
+
+function init() {
+    updateBuildBadge();
     loadDefaultLineSettings();
     setupEventListeners();
     setupColorPickers();
@@ -3275,10 +3306,14 @@ function saveGoogleConfig() {
 
 function clearGoogleConfig() {
     localStorage.removeItem("flowcraft_google_client_id");
-    googleClientId = "";
-    inputClientId.value = "";
+    googleClientId = configuredGoogleClientId || "";
+    inputClientId.value = googleClientId;
     showGoogleConfigModal(false);
-    alert("Google credentials cleared. Please configure again to use Google Drive.");
+    if (googleClientId) {
+        alert("Local override cleared. Falling back to shared app configuration.");
+    } else {
+        alert("Google credentials cleared. Please configure again to use Google Drive.");
+    }
     signOutGoogle();
 }
 

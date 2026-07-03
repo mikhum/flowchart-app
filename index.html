@@ -186,7 +186,7 @@
                 <div class="topbar-title-section">
                     <span class="doc-title" id="doc-title" contenteditable="true">Untitled Flowchart</span>
                     <span class="save-status" id="save-status">Saved locally</span>
-                    <span class="save-status" id="build-id">Commit e90d827</span>
+                    <span class="save-status" id="build-id">Commit local-dev</span>
                 </div>
                 <div class="topbar-actions">
                     <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
@@ -434,7 +434,7 @@
                     <button class="modal-close" id="close-config-modal">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p class="modal-instruction">To use Google Drive Sync, please enter your Google OAuth 2.0 Client ID. This credentials parameter is saved securely in your local browser storage.</p>
+                    <p class="modal-instruction">To use Google Drive Sync, enter your Google OAuth 2.0 Client ID. This value is stored in local browser storage for this device only unless you set a shared value in app-config.js.</p>
                     <div class="form-group">
                         <label for="google-client-id">Google Client ID</label>
                         <input type="text" id="google-client-id" placeholder="123456789-abc123XYZ.apps.googleusercontent.com" class="form-control">
@@ -520,7 +520,8 @@
         </div>
     </div>
 
+    <script src="app-config.js"></script>
     <!-- Core App JS -->
-    <script src="app.js?v=20260703-drag-state-1"></script>
+    <script src="app.js?v=20260703-build-meta-1"></script>
 </body>
 </html>
