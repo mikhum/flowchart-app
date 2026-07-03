@@ -65,11 +65,54 @@ const configuredGoogleClientId = (
     window.FLOWCRAFT_CONFIG &&
     typeof window.FLOWCRAFT_CONFIG.googleClientId === "string"
 ) ? window.FLOWCRAFT_CONFIG.googleClientId.trim() : "";
+const configuredAllowedOrigins = Array.isArray(window.FLOWCRAFT_CONFIG?.allowedOrigins)
+    ? window.FLOWCRAFT_CONFIG.allowedOrigins
+        .map((origin) => String(origin || "").trim())
+        .filter(Boolean)
+    : [];
 let googleClientId = localStorage.getItem("flowcraft_google_client_id") || configuredGoogleClientId || "";
 let accessToken = "";
 let userProfile = null;
 let tokenClient = null;
 const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
+
+function isValidGoogleClientId(clientId) {
+    return /^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(String(clientId || "").trim());
+}
+
+function isTrustedRuntimeOrigin() {
+    if (configuredAllowedOrigins.length === 0) return true;
+    return configuredAllowedOrigins.includes(window.location.origin);
+}
+
+function ensureTrustedOriginForGoogle() {
+    if (isTrustedRuntimeOrigin()) return true;
+
+    alert("Google OAuth is disabled on this origin. Configure allowedOrigins in app-config.js and Google Cloud OAuth origins.");
+    return false;
+}
+
+function updateGoogleSecurityState() {
+    const trustedOrigin = isTrustedRuntimeOrigin();
+    if (trustedOrigin) return;
+
+    googleClientId = "";
+    accessToken = "";
+    tokenClient = null;
+
+    if (btnGoogleSignIn) btnGoogleSignIn.disabled = true;
+    if (btnSaveGdrive) btnSaveGdrive.disabled = true;
+    if (btnOpenGdrive) btnOpenGdrive.disabled = true;
+
+    const profileCard = document.getElementById("user-profile");
+    const signInContainer = document.getElementById("google-sign-in-btn");
+    const driveActions = document.getElementById("gdrive-actions");
+    if (profileCard) profileCard.style.display = "none";
+    if (signInContainer) signInContainer.style.display = "none";
+    if (driveActions) driveActions.style.display = "none";
+
+    saveStatus.textContent = "OAuth disabled on this origin";
+}
 
 function isAllowedGoogleDomain(payload) {
     if (!payload || typeof payload !== "object") return false;
@@ -252,6 +295,7 @@ function init() {
     updateBuildBadge();
     loadDefaultLineSettings();
     setupEventListeners();
+    updateGoogleSecurityState();
     setupColorPickers();
     loadLocalFilesList();
     
@@ -271,7 +315,7 @@ function init() {
     }
     
     // Google GIS Auto login check
-    if (googleClientId) {
+    if (googleClientId && isTrustedRuntimeOrigin()) {
         inputClientId.value = googleClientId;
         initGoogleClient();
     }
@@ -3340,9 +3384,15 @@ function showGoogleConfigModal(show) {
 }
 
 function saveGoogleConfig() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
     const cid = inputClientId.value.trim();
     if (!cid) {
         alert("Please enter a valid Google Client ID.");
+        return;
+    }
+    if (!isValidGoogleClientId(cid)) {
+        alert("Invalid Google Client ID format. Expected *.apps.googleusercontent.com");
         return;
     }
     googleClientId = cid;
@@ -3366,6 +3416,8 @@ function clearGoogleConfig() {
 }
 
 function startGoogleSignIn() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
     if (!googleClientId) {
         alert("Börja med att ange Google OAuth Client ID under OAuth Credentials.");
         showGoogleConfigModal(true);
@@ -3385,6 +3437,11 @@ function startGoogleSignIn() {
 // Initialize the Google OAuth & GIS sign-in button
 function initGoogleClient() {
     if (!googleClientId) return;
+    if (!ensureTrustedOriginForGoogle()) return;
+    if (!isValidGoogleClientId(googleClientId)) {
+        console.warn("Skipping OAuth init due to invalid Google client ID format.");
+        return;
+    }
     
     try {
         // Initialize GIS Login client
@@ -3480,6 +3537,8 @@ function signOutGoogle() {
 }
 
 async function saveToGoogleDrive() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
     if (!accessToken) {
         if (tokenClient) tokenClient.requestAccessToken();
         else alert("Please configure Google Client ID first.");
@@ -3547,6 +3606,8 @@ function showGdriveExplorer(show) {
 }
 
 async function openGoogleDriveExplorer() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
     if (!accessToken) {
         if (tokenClient) tokenClient.requestAccessToken();
         else alert("Please configure Google Client ID first.");
