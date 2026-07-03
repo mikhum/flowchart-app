@@ -708,6 +708,28 @@ body.line-end-dragging .connector-line-overlay {
     transform: translate(-50%, -50%) scale(1.05);
 }
 
+.line-route-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 2px solid var(--accent-primary);
+    background: #ffffff;
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    cursor: move;
+    pointer-events: auto;
+    box-shadow: var(--shadow-sm);
+}
+
+.line-route-handle:hover {
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.2);
+}
+
+body.line-route-dragging .line-route-handle {
+    cursor: grabbing;
+}
+
 /* HTML Nodes Container */
 .nodes-container {
     position: absolute;

@@ -49,6 +49,8 @@ let hoveredPortNodeId = null;
 let hoveredPortName = null;
 let draggingLineEnd = null; // { lineId: string, end: 'from' | 'to' }
 let lineEndSnapTarget = null; // { nodeId: string, portName: string } | null
+let draggingLineRouteId = null;
+let lineRouteDragStartWaypoint = null;
 
 // Snap to grid
 let snapGridEnabled = true;
@@ -764,7 +766,7 @@ function handleWorkspaceContextMenu(e) {
 }
 
 function hasActivePointerInteraction() {
-    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
+    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
 }
 
 function handleGlobalPointerAbort() {
@@ -809,6 +811,16 @@ function handleGlobalPointerMove(e) {
             if (portEl) portEl.classList.add("snapped");
         }
         renderConnectors();
+    } else if (draggingLineRouteId) {
+        const line = lines.find(l => l.id === draggingLineRouteId);
+        if (line) {
+            const coords = screenToCanvas(e.clientX, e.clientY);
+            line.manualWaypoint = {
+                x: snap(coords.x),
+                y: snap(coords.y)
+            };
+            renderConnectors();
+        }
     } else if (draggingNodeId && nodes[draggingNodeId]) {
         // Move shape node
         const coords = screenToCanvas(e.clientX, e.clientY);
@@ -924,6 +936,25 @@ function handleGlobalPointerUp(e) {
         document.body.classList.remove("line-end-dragging");
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
+    } else if (draggingLineRouteId) {
+        const line = lines.find(l => l.id === draggingLineRouteId);
+        const before = lineRouteDragStartWaypoint;
+        const after = line ? line.manualWaypoint : null;
+        const moved = !!line && (
+            !before ||
+            !after ||
+            before.x !== after.x ||
+            before.y !== after.y
+        );
+
+        draggingLineRouteId = null;
+        lineRouteDragStartWaypoint = null;
+        document.body.classList.remove("line-route-dragging");
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+        }
+        renderConnectors();
     } else if (draggingNodeId) {
         const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
             ? Array.from(selectedNodeIds)
@@ -1020,8 +1051,10 @@ function resetTransientInteractions() {
     lineDrawingMousePos = null;
     draggingLineEnd = null;
     lineEndSnapTarget = null;
+    draggingLineRouteId = null;
+    lineRouteDragStartWaypoint = null;
     setMarqueeBoxVisibility(false);
-    document.body.classList.remove("drawing-line", "line-end-dragging");
+    document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging");
     document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
 }
 
@@ -1464,21 +1497,7 @@ function renderConnectors() {
         
         if (!fromCoords || !toCoords) return;
         
-        let pathD = "";
-        
-        if (line.lineType === "straight") {
-            pathD = `M ${fromCoords.x} ${fromCoords.y} L ${toCoords.x} ${toCoords.y}`;
-        } else if (line.lineType === "curved") {
-            const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
-            const ctrlOffset = Math.min(120, distance * 0.4);
-            
-            const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
-            const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
-            
-            pathD = `M ${fromCoords.x} ${fromCoords.y} C ${fromCoords.x + ctrl1.x} ${fromCoords.y + ctrl1.y}, ${toCoords.x + ctrl2.x} ${toCoords.y + ctrl2.y}, ${toCoords.x} ${toCoords.y}`;
-        } else { // orthogonal (elbow bends)
-            pathD = getOrthogonalPath(fromCoords.x, fromCoords.y, line.fromPort, toCoords.x, toCoords.y, line.toPort);
-        }
+        const pathD = getLinePathD(line, fromCoords, toCoords);
         
         // Draw physical line path
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -1488,8 +1507,12 @@ function renderConnectors() {
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
             if (tryStartNodeDragFromPointer(e)) return;
+            const wasSelected = selectedId === line.id && selectedType === "line";
             e.stopPropagation();
             selectElement(line.id, "line");
+            if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            }
         });
         
         if (line.lineStyle === "dashed") path.style.strokeDasharray = "6 4";
@@ -1513,12 +1536,37 @@ function renderConnectors() {
         overlay.setAttribute("class", "connector-line-overlay");
         overlay.addEventListener("pointerdown", (e) => {
             if (tryStartNodeDragFromPointer(e)) return;
+            const wasSelected = selectedId === line.id && selectedType === "line";
             e.stopPropagation();
             selectElement(line.id, "line");
+            if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            }
         });
         svgOverlay.appendChild(overlay);
 
         if (selectedId === line.id && selectedType === "line" && lineHandlesLayer) {
+            const routePoint = getLineRouteHandlePoint(line, fromCoords, toCoords);
+            const routeHandle = document.createElement("div");
+            routeHandle.className = "line-route-handle";
+            routeHandle.style.left = `${routePoint.x}px`;
+            routeHandle.style.top = `${routePoint.y}px`;
+            routeHandle.title = "Drag to reroute line";
+            routeHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            });
+            routeHandle.addEventListener("dblclick", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                delete line.manualWaypoint;
+                saveHistory();
+                saveAutosave();
+                renderConnectors();
+            });
+            lineHandlesLayer.appendChild(routeHandle);
+
             const beginLineEndDrag = (end) => {
                 selectElement(line.id, "line");
                 draggingNodeId = null;
@@ -1707,6 +1755,118 @@ function getOrthogonalPolyline(x1, y1, port1, x2, y2, port2) {
 function getOrthogonalPath(x1, y1, port1, x2, y2, port2) {
     const points = getOrthogonalPolyline(x1, y1, port1, x2, y2, port2);
     return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+}
+
+function getOrthogonalPolylineWithWaypoint(fromCoords, toCoords, waypoint) {
+    if (!waypoint) return [fromCoords, toCoords];
+
+    const p = [
+        { x: fromCoords.x, y: fromCoords.y },
+        { x: waypoint.x, y: fromCoords.y },
+        { x: waypoint.x, y: waypoint.y },
+        { x: toCoords.x, y: waypoint.y },
+        { x: toCoords.x, y: toCoords.y }
+    ];
+
+    return p.filter((point, idx) => idx === 0 || point.x !== p[idx - 1].x || point.y !== p[idx - 1].y);
+}
+
+function getLineOrthogonalPolyline(line, fromCoords, toCoords) {
+    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return getOrthogonalPolylineWithWaypoint(fromCoords, toCoords, line.manualWaypoint);
+    }
+
+    return getOrthogonalPolyline(fromCoords.x, fromCoords.y, line.fromPort, toCoords.x, toCoords.y, line.toPort);
+}
+
+function getLineStraightPolyline(line, fromCoords, toCoords) {
+    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return [
+            { x: fromCoords.x, y: fromCoords.y },
+            { x: line.manualWaypoint.x, y: line.manualWaypoint.y },
+            { x: toCoords.x, y: toCoords.y }
+        ];
+    }
+
+    return [fromCoords, toCoords];
+}
+
+function getLinePathD(line, fromCoords, toCoords) {
+    if (line.lineType === "straight") {
+        const points = getLineStraightPolyline(line, fromCoords, toCoords);
+        return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+    }
+
+    if (line.lineType === "curved") {
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            return `M ${fromCoords.x} ${fromCoords.y} Q ${line.manualWaypoint.x} ${line.manualWaypoint.y}, ${toCoords.x} ${toCoords.y}`;
+        }
+
+        const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+        const ctrlOffset = Math.min(120, distance * 0.4);
+        const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+        const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+        return `M ${fromCoords.x} ${fromCoords.y} C ${fromCoords.x + ctrl1.x} ${fromCoords.y + ctrl1.y}, ${toCoords.x + ctrl2.x} ${toCoords.y + ctrl2.y}, ${toCoords.x} ${toCoords.y}`;
+    }
+
+    const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+    return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+}
+
+function getLineRouteHandlePoint(line, fromCoords, toCoords) {
+    if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return { x: line.manualWaypoint.x, y: line.manualWaypoint.y };
+    }
+
+    if (line.lineType === "straight" || line.lineType === "curved") {
+        return {
+            x: (fromCoords.x + toCoords.x) / 2,
+            y: (fromCoords.y + toCoords.y) / 2
+        };
+    }
+
+    const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+    if (points.length < 2) {
+        return {
+            x: (fromCoords.x + toCoords.x) / 2,
+            y: (fromCoords.y + toCoords.y) / 2
+        };
+    }
+
+    const midIndex = Math.max(0, Math.floor((points.length - 2) / 2));
+    const a = points[midIndex];
+    const b = points[midIndex + 1];
+    return {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+    };
+}
+
+function beginLineRouteDrag(line, e, fromCoords, toCoords) {
+    if (!line) return;
+
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+
+    const existing = line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)
+        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
+        : null;
+    lineRouteDragStartWaypoint = existing;
+
+    const coords = screenToCanvas(e.clientX, e.clientY);
+    const fallback = getLineRouteHandlePoint(line, fromCoords, toCoords);
+    line.manualWaypoint = {
+        x: snap(Number.isFinite(coords.x) ? coords.x : fallback.x),
+        y: snap(Number.isFinite(coords.y) ? coords.y : fallback.y)
+    };
+    draggingLineRouteId = line.id;
+    document.body.classList.add("line-route-dragging");
+    renderConnectors();
 }
 
 // --- Text Inline Editing ---
@@ -2260,6 +2420,24 @@ function pasteCopiedElement() {
     }
 }
 
+function nudgeSelectedNodesBy(dx, dy) {
+    if (selectedType !== "node" || selectedNodeIds.size === 0) return false;
+
+    const selectedNodes = Array.from(selectedNodeIds).filter((nodeId) => !!nodes[nodeId]);
+    if (selectedNodes.length === 0) return false;
+
+    selectedNodes.forEach((nodeId) => {
+        nodes[nodeId].x = Math.round((Number(nodes[nodeId].x) || 0) + dx);
+        nodes[nodeId].y = Math.round((Number(nodes[nodeId].y) || 0) + dy);
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
 // --- Keyboard Handling ---
 function handleKeyDown(e) {
     // Disable shortcuts if writing text or in modals
@@ -2268,6 +2446,21 @@ function handleKeyDown(e) {
     }
 
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    const arrowNudges = {
+        ArrowLeft: { dx: -1, dy: 0 },
+        ArrowRight: { dx: 1, dy: 0 },
+        ArrowUp: { dx: 0, dy: -1 },
+        ArrowDown: { dx: 0, dy: 1 }
+    };
+
+    if (arrowNudges[e.key]) {
+        const step = e.shiftKey ? 10 : 1;
+        const { dx, dy } = arrowNudges[e.key];
+        const moved = nudgeSelectedNodesBy(dx * step, dy * step);
+        if (moved) e.preventDefault();
+        return;
+    }
     
     // Delete key
     if (e.key === "Delete" || e.key === "Backspace") {
@@ -4104,29 +4297,46 @@ function drawLineOnCanvas(ctx, line) {
     let endDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
 
     if (line.lineType === "curved") {
-        const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
-        const ctrlOffset = Math.min(120, distance * 0.4);
-        const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
-        const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
-        const c1x = fromCoords.x + ctrl1.x;
-        const c1y = fromCoords.y + ctrl1.y;
-        const c2x = toCoords.x + ctrl2.x;
-        const c2y = toCoords.y + ctrl2.y;
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            const wx = line.manualWaypoint.x;
+            const wy = line.manualWaypoint.y;
+            ctx.beginPath();
+            ctx.moveTo(fromCoords.x, fromCoords.y);
+            ctx.quadraticCurveTo(wx, wy, toCoords.x, toCoords.y);
+            ctx.stroke();
 
-        ctx.beginPath();
-        ctx.moveTo(fromCoords.x, fromCoords.y);
-        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, toCoords.x, toCoords.y);
-        ctx.stroke();
+            startDir = { x: wx - fromCoords.x, y: wy - fromCoords.y };
+            endDir = { x: toCoords.x - wx, y: toCoords.y - wy };
+        } else {
+            const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+            const ctrlOffset = Math.min(120, distance * 0.4);
+            const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+            const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+            const c1x = fromCoords.x + ctrl1.x;
+            const c1y = fromCoords.y + ctrl1.y;
+            const c2x = toCoords.x + ctrl2.x;
+            const c2y = toCoords.y + ctrl2.y;
 
-        startDir = { x: c1x - fromCoords.x, y: c1y - fromCoords.y };
-        endDir = { x: toCoords.x - c2x, y: toCoords.y - c2y };
+            ctx.beginPath();
+            ctx.moveTo(fromCoords.x, fromCoords.y);
+            ctx.bezierCurveTo(c1x, c1y, c2x, c2y, toCoords.x, toCoords.y);
+            ctx.stroke();
+
+            startDir = { x: c1x - fromCoords.x, y: c1y - fromCoords.y };
+            endDir = { x: toCoords.x - c2x, y: toCoords.y - c2y };
+        }
     } else if (line.lineType === "straight") {
+        const points = getLineStraightPolyline(line, fromCoords, toCoords);
         ctx.beginPath();
-        ctx.moveTo(fromCoords.x, fromCoords.y);
-        ctx.lineTo(toCoords.x, toCoords.y);
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
         ctx.stroke();
+
+        startDir = { x: points[1].x - points[0].x, y: points[1].y - points[0].y };
+        const n = points.length;
+        endDir = { x: points[n - 1].x - points[n - 2].x, y: points[n - 1].y - points[n - 2].y };
     } else {
-        const points = getOrthogonalPolyline(fromCoords.x, fromCoords.y, line.fromPort, toCoords.x, toCoords.y, line.toPort);
+        const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
