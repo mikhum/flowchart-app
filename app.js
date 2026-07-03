@@ -970,7 +970,7 @@ function handleGlobalPointerUp(e) {
 // --- Drag & Drop Library Shapes ---
 const LIBRARY_SHAPE_TYPES = new Set([
     "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-    "text-box", "sticky-note"
+    "text-box", "sticky-note", "cloud"
 ]);
 
 let libraryDragShapeType = "";
@@ -1029,6 +1029,7 @@ function addNewShapeNode(shapeType, x, y) {
     const id = "node_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
     const isTextBox = shapeType === "text-box";
     const isStickyNote = shapeType === "sticky-note";
+    const isCloud = shapeType === "cloud";
     
     nodes[id] = {
         id: id,
@@ -1037,7 +1038,7 @@ function addNewShapeNode(shapeType, x, y) {
         x: x,
         y: y,
         width: 120,
-        height: isTextBox ? 36 : (isStickyNote ? 90 : 60),
+        height: isTextBox ? 36 : (isStickyNote ? 90 : (isCloud ? 72 : 60)),
         text: isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape"),
         textOffset: { x: 0, y: 0 },
         textSize: 14,
@@ -1418,6 +1419,9 @@ function generateShapeSVG(node) {
             
         case "hexagon":
             return `<svg><polygon points="${w*0.18} ${strokeW}, ${w*0.82} ${strokeW}, ${w-strokeW} ${h/2}, ${w*0.82} ${h - strokeW}, ${w*0.18} ${h - strokeW}, ${strokeW} ${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "cloud":
+            return `<svg><path d="${buildCloudPathData(strokeW / 2, strokeW / 2, w - strokeW, h - strokeW)}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
 
         default:
             return "";
@@ -2686,11 +2690,12 @@ function normalizeShapeType(shapeType) {
         io: "parallelogram",
         connector: "circle",
         document: "document",
-        preparation: "hexagon"
+        preparation: "hexagon",
+        cloud: "cloud"
     };
     const supported = new Set([
         "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-        "text-box", "sticky-note"
+        "text-box", "sticky-note", "cloud"
     ]);
     const mapped = map[val] || val;
     return supported.has(mapped) ? mapped : "rectangle";
@@ -2843,7 +2848,7 @@ function getParentShapeElement(shapeEl) {
 
 function detectFlowcraftShapeTypeFromVisio(shapeEl) {
     const hint = String(shapeEl?.getAttribute("NameU") || shapeEl?.getAttribute("Name") || "").toLowerCase();
-    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "rectangle";
+    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "cloud";
     if (hint.includes("bpmnactivity")) return "terminator";
     if (hint.includes("stickiesstickynoteblock") || hint.includes("sticky")) return "document";
     if (hint.includes("defaultsquareblock")) return "rectangle";
@@ -3880,6 +3885,9 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
             ctx.lineTo(x + strokeW, y + h / 2);
             ctx.closePath();
             break;
+        case "cloud":
+            addCloudPath(ctx, x + strokeW / 2, y + strokeW / 2, w - strokeW, h - strokeW);
+            break;
         case "sticky-note":
             ctx.beginPath();
             ctx.rect(left, top, width, height);
@@ -3891,6 +3899,57 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
             ctx.closePath();
             break;
     }
+}
+
+function buildCloudPathData(x, y, w, h) {
+    const p = {
+        s: { x: x + w * 0.2, y: y + h * 0.72 },
+        p1: { x: x + w * 0.08, y: y + h * 0.72 },
+        p2: { x: x + w * 0.16, y: y + h * 0.5 },
+        p3: { x: x + w * 0.38, y: y + h * 0.44 },
+        p4: { x: x + w * 0.62, y: y + h * 0.36 },
+        p5: { x: x + w * 0.84, y: y + h * 0.5 },
+        p6: { x: x + w * 0.92, y: y + h * 0.72 },
+        p7: { x: x + w * 0.76, y: y + h * 0.8 }
+    };
+
+    return [
+        `M ${p.s.x} ${p.s.y}`,
+        `C ${x + w * 0.1} ${y + h * 0.86}, ${x + w * 0.02} ${y + h * 0.82}, ${p.p1.x} ${p.p1.y}`,
+        `C ${x + w * 0.02} ${y + h * 0.58}, ${x + w * 0.06} ${y + h * 0.44}, ${p.p2.x} ${p.p2.y}`,
+        `C ${x + w * 0.18} ${y + h * 0.3}, ${x + w * 0.3} ${y + h * 0.28}, ${p.p3.x} ${p.p3.y}`,
+        `C ${x + w * 0.42} ${y + h * 0.2}, ${x + w * 0.56} ${y + h * 0.2}, ${p.p4.x} ${p.p4.y}`,
+        `C ${x + w * 0.7} ${y + h * 0.2}, ${x + w * 0.82} ${y + h * 0.3}, ${p.p5.x} ${p.p5.y}`,
+        `C ${x + w * 0.98} ${y + h * 0.54}, ${x + w * 0.98} ${y + h * 0.66}, ${p.p6.x} ${p.p6.y}`,
+        `C ${x + w * 0.9} ${y + h * 0.84}, ${x + w * 0.84} ${y + h * 0.84}, ${p.p7.x} ${p.p7.y}`,
+        `C ${x + w * 0.64} ${y + h * 0.92}, ${x + w * 0.34} ${y + h * 0.92}, ${p.s.x} ${p.s.y}`,
+        "Z"
+    ].join(" ");
+}
+
+function addCloudPath(ctx, x, y, w, h) {
+    const p = {
+        s: { x: x + w * 0.2, y: y + h * 0.72 },
+        p1: { x: x + w * 0.08, y: y + h * 0.72 },
+        p2: { x: x + w * 0.16, y: y + h * 0.5 },
+        p3: { x: x + w * 0.38, y: y + h * 0.44 },
+        p4: { x: x + w * 0.62, y: y + h * 0.36 },
+        p5: { x: x + w * 0.84, y: y + h * 0.5 },
+        p6: { x: x + w * 0.92, y: y + h * 0.72 },
+        p7: { x: x + w * 0.76, y: y + h * 0.8 }
+    };
+
+    ctx.beginPath();
+    ctx.moveTo(p.s.x, p.s.y);
+    ctx.bezierCurveTo(x + w * 0.1, y + h * 0.86, x + w * 0.02, y + h * 0.82, p.p1.x, p.p1.y);
+    ctx.bezierCurveTo(x + w * 0.02, y + h * 0.58, x + w * 0.06, y + h * 0.44, p.p2.x, p.p2.y);
+    ctx.bezierCurveTo(x + w * 0.18, y + h * 0.3, x + w * 0.3, y + h * 0.28, p.p3.x, p.p3.y);
+    ctx.bezierCurveTo(x + w * 0.42, y + h * 0.2, x + w * 0.56, y + h * 0.2, p.p4.x, p.p4.y);
+    ctx.bezierCurveTo(x + w * 0.7, y + h * 0.2, x + w * 0.82, y + h * 0.3, p.p5.x, p.p5.y);
+    ctx.bezierCurveTo(x + w * 0.98, y + h * 0.54, x + w * 0.98, y + h * 0.66, p.p6.x, p.p6.y);
+    ctx.bezierCurveTo(x + w * 0.9, y + h * 0.84, x + w * 0.84, y + h * 0.84, p.p7.x, p.p7.y);
+    ctx.bezierCurveTo(x + w * 0.64, y + h * 0.92, x + w * 0.34, y + h * 0.92, p.s.x, p.s.y);
+    ctx.closePath();
 }
 
 function drawNodeLabel(ctx, node, x, y, w, h) {

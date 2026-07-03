@@ -403,6 +403,26 @@ body, html {
     border-radius: 50%;
 }
 
+.cloud-icon {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cloud-icon svg {
+    width: 32px;
+    height: 20px;
+}
+
+.cloud-icon path {
+    fill: #f1f5f9;
+    stroke: currentColor;
+    stroke-width: 1.6;
+}
+
 .palette-item:hover .shape-icon {
     color: var(--accent-primary);
     border-color: var(--accent-primary);
