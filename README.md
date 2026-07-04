@@ -84,16 +84,24 @@ window.FLOWCRAFT_CONFIG = {
     "http://127.0.0.1:3000",
     "http://localhost:3000",
     "https://<your-github-pages-domain>"
-  ]
+  ],
+  allowLocalClientIdOverride: false
 };
 ```
+
+Config behavior:
+
+- `googleClientId` in `app-config.js` is the primary source (recommended)
+- Local per-device override in browser storage is only intended for debug/fallback
+- Set `allowLocalClientIdOverride: true` only if you explicitly want local overrides
 
 2. In Google Cloud Console OAuth settings:
 - Add exact Authorized JavaScript origins matching your runtime URLs
 - Use least-privilege scopes (the app uses `drive.file`)
 
 3. In app UI:
-- Use OAuth Credentials if you want a per-device local override
+- OAuth Credentials modal is active only when local override is enabled or no shared ID is configured
+- In production, keep `allowLocalClientIdOverride` as `false`
 
 ## Keyboard Shortcuts
 

@@ -4,5 +4,7 @@
 // If allowedOrigins is non-empty, Google OAuth is only enabled on listed origins.
 window.FLOWCRAFT_CONFIG = {
     googleClientId: "",
-    allowedOrigins: []
+    allowedOrigins: [],
+    // Keep false in production. True enables per-device local client-id override.
+    allowLocalClientIdOverride: false
 };

@@ -72,7 +72,21 @@ const configuredAllowedOrigins = Array.isArray(window.FLOWCRAFT_CONFIG?.allowedO
         .map((origin) => String(origin || "").trim())
         .filter(Boolean)
     : [];
-let googleClientId = localStorage.getItem("flowcraft_google_client_id") || configuredGoogleClientId || "";
+const allowLocalClientIdOverride = !!window.FLOWCRAFT_CONFIG?.allowLocalClientIdOverride;
+
+function getStoredLocalGoogleClientId() {
+    return String(localStorage.getItem("flowcraft_google_client_id") || "").trim();
+}
+
+function getEffectiveGoogleClientId() {
+    const localClientId = getStoredLocalGoogleClientId();
+    // Config-first by default. Local override can supersede only when explicitly enabled.
+    if (allowLocalClientIdOverride && localClientId) return localClientId;
+    if (configuredGoogleClientId) return configuredGoogleClientId;
+    return localClientId;
+}
+
+let googleClientId = getEffectiveGoogleClientId();
 let accessToken = "";
 let userProfile = null;
 let tokenClient = null;
@@ -114,6 +128,27 @@ function updateGoogleSecurityState() {
     if (driveActions) driveActions.style.display = "none";
 
     saveStatus.textContent = "OAuth disabled on this origin";
+}
+
+function updateGoogleConfigUiState() {
+    if (!inputClientId || !btnSaveConfig || !btnClearConfig) return;
+
+    const hasSharedConfig = !!configuredGoogleClientId;
+    const overrideEnabled = allowLocalClientIdOverride;
+
+    if (hasSharedConfig && !overrideEnabled) {
+        inputClientId.value = configuredGoogleClientId;
+        inputClientId.readOnly = true;
+        inputClientId.disabled = true;
+        btnSaveConfig.disabled = true;
+        btnClearConfig.disabled = true;
+        return;
+    }
+
+    inputClientId.readOnly = false;
+    inputClientId.disabled = false;
+    btnSaveConfig.disabled = false;
+    btnClearConfig.disabled = false;
 }
 
 function isAllowedGoogleDomain(payload) {
@@ -295,6 +330,7 @@ async function updateBuildBadge() {
 
 function init() {
     updateBuildBadge();
+    updateGoogleConfigUiState();
     loadDefaultLineSettings();
     setupEventListeners();
     updateGoogleSecurityState();
@@ -3578,11 +3614,18 @@ async function importJsonFile(e) {
 // --- Google Drive & OAuth Integration (Domain Restricted) ---
 
 function showGoogleConfigModal(show) {
+    if (show) updateGoogleConfigUiState();
     googleConfigModal.classList.toggle("active", show);
 }
 
 function saveGoogleConfig() {
     if (!ensureTrustedOriginForGoogle()) return;
+
+    if (configuredGoogleClientId && !allowLocalClientIdOverride) {
+        alert("Shared app configuration is active. Local override is disabled.");
+        showGoogleConfigModal(false);
+        return;
+    }
 
     const cid = inputClientId.value.trim();
     if (!cid) {
@@ -3601,8 +3644,14 @@ function saveGoogleConfig() {
 }
 
 function clearGoogleConfig() {
+    if (configuredGoogleClientId && !allowLocalClientIdOverride) {
+        alert("Shared app configuration is active. Nothing to clear locally.");
+        showGoogleConfigModal(false);
+        return;
+    }
+
     localStorage.removeItem("flowcraft_google_client_id");
-    googleClientId = configuredGoogleClientId || "";
+    googleClientId = getEffectiveGoogleClientId();
     inputClientId.value = googleClientId;
     showGoogleConfigModal(false);
     if (googleClientId) {
@@ -3615,6 +3664,11 @@ function clearGoogleConfig() {
 
 function startGoogleSignIn() {
     if (!ensureTrustedOriginForGoogle()) return;
+
+    googleClientId = getEffectiveGoogleClientId();
+    if (!googleClientId) {
+        inputClientId.value = "";
+    }
 
     if (!googleClientId) {
         alert("Börja med att ange Google OAuth Client ID under OAuth Credentials.");
