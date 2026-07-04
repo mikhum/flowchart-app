@@ -4,7 +4,11 @@
 // If allowedOrigins is non-empty, Google OAuth is only enabled on listed origins.
 window.FLOWCRAFT_CONFIG = {
     googleClientId: "",
-    allowedOrigins: [],
+    allowedOrigins: [
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "https://mikhum.github.io"
+    ],
     // Keep false in production. True enables per-device local client-id override.
     allowLocalClientIdOverride: false
 };

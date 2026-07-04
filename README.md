@@ -83,7 +83,7 @@ window.FLOWCRAFT_CONFIG = {
   allowedOrigins: [
     "http://127.0.0.1:3000",
     "http://localhost:3000",
-    "https://<your-github-pages-domain>"
+    "https://mikhum.github.io"
   ],
   allowLocalClientIdOverride: false
 };
