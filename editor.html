@@ -53,7 +53,10 @@
                                 <i class="fa-solid fa-right-from-bracket"></i>
                             </button>
                         </div>
-                        <div class="google-drive-sidebar-actions" id="gdrive-open-actions" style="display: none;">
+                        <div class="google-drive-actions" id="gdrive-actions" style="display: none;">
+                            <button class="btn btn-primary" id="btn-save-gdrive">
+                                <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
+                            </button>
                             <button class="btn btn-outline" id="btn-open-gdrive">
                                 <i class="fa-solid fa-folder-open"></i> Open from Drive
                             </button>
@@ -138,6 +141,9 @@
                         <button class="btn btn-outline" id="btn-new-flowchart">
                             <i class="fa-solid fa-plus"></i> New Flowchart
                         </button>
+                        <button class="btn btn-outline" id="btn-save-local">
+                            <i class="fa-solid fa-hdd"></i> Save Locally
+                        </button>
                     </div>
                     <div class="saved-maps-list" id="local-files-list">
                         <div class="empty-state">No local saves.</div>
@@ -191,15 +197,6 @@
                     <span class="save-status" id="build-id">Commit local-dev</span>
                 </div>
                 <div class="topbar-actions">
-                    <button class="btn btn-primary topbar-action-btn" id="btn-save-local" title="Save this flowchart locally">
-                        <i class="fa-solid fa-hdd"></i> Save Locally
-                    </button>
-                    <div class="google-drive-actions topbar-action-drive" id="gdrive-actions" style="display: none;">
-                        <button class="btn btn-outline topbar-action-btn" id="btn-save-gdrive" title="Save to Google Drive">
-                            <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
-                        </button>
-                    </div>
-                    <div class="topbar-divider"></div>
                     <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
                     <div class="topbar-divider"></div>

@@ -424,8 +424,6 @@ function init() {
         if (accessToken) {
             const da = document.getElementById("gdrive-actions");
             if (da) da.style.display = "flex";
-            const oa = document.getElementById("gdrive-open-actions");
-            if (oa) oa.style.display = "block";
         }
     }
 
@@ -3794,14 +3792,10 @@ function initGoogleClient() {
                 if (resp && resp.access_token && isAllowedGoogleDomain(userProfile)) {
                     accessToken = resp.access_token;
                     document.getElementById("gdrive-actions").style.display = "flex";
-                    const openActions = document.getElementById("gdrive-open-actions");
-                    if (openActions) openActions.style.display = "block";
                     saveStatus.textContent = "Google Drive Connected";
                 } else {
                     accessToken = "";
                     document.getElementById("gdrive-actions").style.display = "none";
-                    const openActions = document.getElementById("gdrive-open-actions");
-                    if (openActions) openActions.style.display = "none";
                 }
             }
         });
@@ -3860,8 +3854,6 @@ function signOutGoogle() {
     document.getElementById("google-sign-in-btn").style.display = "block";
     document.getElementById("user-profile").style.display = "none";
     document.getElementById("gdrive-actions").style.display = "none";
-    const openActionsSignOut = document.getElementById("gdrive-open-actions");
-    if (openActionsSignOut) openActionsSignOut.style.display = "none";
     saveStatus.textContent = "Saved locally";
     currentDriveFileId = null;
     
