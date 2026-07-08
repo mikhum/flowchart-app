@@ -1470,7 +1470,7 @@ function render() {
                 linkIcon.addEventListener("pointerdown", e => e.stopPropagation());
                 linkIcon.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    const safeUrl = /^https?:\/\//i.test(node.url) ? node.url : null;
+                    const safeUrl = sanitizeUrl(node.url);
                     if (safeUrl) window.open(safeUrl, "_blank", "noopener,noreferrer");
                 });
                 nodeEl.appendChild(linkIcon);
@@ -1507,7 +1507,14 @@ function renderNodeResizeHandle(node) {
 // Validates that a value is a safe CSS colour (prevents SVG attribute injection).
 const CSS_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|transparent|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)|hsla?\(\s*[\d.]+\s*,\s*[\d.%]+\s*,\s*[\d.%]+(?:\s*,\s*[\d.]+)?\s*\))$/;
 function sanitizeCssColor(val, fallback) {
-    return CSS_COLOR_RE.test(String(val || "").trim()) ? val : fallback;
+    const trimmed = String(val || "").trim();
+    return CSS_COLOR_RE.test(trimmed) ? trimmed : fallback;
+}
+
+// Validates that a URL is safe to open (https/http only – blocks javascript: and data: URIs).
+function sanitizeUrl(raw) {
+    const trimmed = String(raw || "").trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : "";
 }
 
 function generateShapeSVG(node) {
@@ -2177,7 +2184,7 @@ function updateSelectedNodeTextPosition() {
 function updateSelectedNodeUrl() {
     if (selectedType === "node" && selectedNodeIds.size > 0) {
         const raw = propUrl.value.trim();
-        const url = /^https?:\/\//i.test(raw) ? raw : "";
+        const url = sanitizeUrl(raw);
         selectedNodeIds.forEach(nodeId => {
             if (nodes[nodeId]) nodes[nodeId].url = url;
         });
@@ -3214,7 +3221,7 @@ function convertLucidchartLikeData(rawData) {
             borderColor: sanitizeCssColor(readString(item, ["strokeColor", "lineColor", "borderColor", "style.stroke", "style.strokeColor"], "#64748b"), "#64748b"),
             borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth", "style.strokeWidth"], 2)),
             borderStyle: readString(item, ["borderStyle", "lineStyle", "style.strokeStyle"], "solid"),
-            url: (function(raw) { return /^https?:\/\//i.test(raw) ? raw : ""; })(readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], ""))
+            url: sanitizeUrl(readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], ""))
         };
 
         if (node.type === "image") {
@@ -3467,7 +3474,9 @@ function initGoogleClient() {
     }
     
     try {
-        // Initialize GIS Login client – callback is kept inside the closure to avoid global exposure
+        // Initialize GIS Login client – callback is kept inside the closure so it is not
+        // accessible as a global (window.handleGoogleSignInCallback), reducing the attack
+        // surface for malicious scripts that might try to invoke it with a forged credential.
         const handleGoogleSignInCallback = (response) => {
             try {
                 const payload = decodeJwt(response.credential);
