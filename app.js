@@ -3,7 +3,7 @@ const APP_BUILD = "login-separated";
 const BUILD_INFO_PATH = "build-info.json";
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
 const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
-const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 50; // 50 minutes
+const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 2; // 2 minutes (short-lived handoff token)
 
 // --- Application State ---
 let nodes = {};
@@ -1470,7 +1470,8 @@ function render() {
                 linkIcon.addEventListener("pointerdown", e => e.stopPropagation());
                 linkIcon.addEventListener("click", (e) => {
                     e.stopPropagation();
-                    window.open(node.url, "_blank");
+                    const safeUrl = /^https?:\/\//i.test(node.url) ? node.url : null;
+                    if (safeUrl) window.open(safeUrl, "_blank", "noopener,noreferrer");
                 });
                 nodeEl.appendChild(linkIcon);
             }
@@ -1503,11 +1504,17 @@ function renderNodeResizeHandle(node) {
     nodeHandlesLayer.appendChild(resizeHandle);
 }
 
+// Validates that a value is a safe CSS colour (prevents SVG attribute injection).
+const CSS_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|transparent|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)|hsla?\(\s*[\d.]+\s*,\s*[\d.%]+\s*,\s*[\d.%]+(?:\s*,\s*[\d.]+)?\s*\))$/;
+function sanitizeCssColor(val, fallback) {
+    return CSS_COLOR_RE.test(String(val || "").trim()) ? val : fallback;
+}
+
 function generateShapeSVG(node) {
     const w = node.width;
     const h = node.height;
-    const fill = node.bgColor;
-    const stroke = node.borderColor;
+    const fill = sanitizeCssColor(node.bgColor, "#ffffff");
+    const stroke = sanitizeCssColor(node.borderColor, "#64748b");
     const strokeW = node.borderWidth;
     
     let dash = "none";
@@ -2169,7 +2176,8 @@ function updateSelectedNodeTextPosition() {
 
 function updateSelectedNodeUrl() {
     if (selectedType === "node" && selectedNodeIds.size > 0) {
-        const url = propUrl.value.trim();
+        const raw = propUrl.value.trim();
+        const url = /^https?:\/\//i.test(raw) ? raw : "";
         selectedNodeIds.forEach(nodeId => {
             if (nodes[nodeId]) nodes[nodeId].url = url;
         });
@@ -3202,11 +3210,11 @@ function convertLucidchartLikeData(rawData) {
             text: asTextLabel(item, "Node"),
             textOffset: { x: 0, y: 0 },
             textSize: 14,
-            bgColor: readString(item, ["fillColor", "backgroundColor", "bgColor", "style.fill", "style.fillColor"], "#ffffff"),
-            borderColor: readString(item, ["strokeColor", "lineColor", "borderColor", "style.stroke", "style.strokeColor"], "#64748b"),
+            bgColor: sanitizeCssColor(readString(item, ["fillColor", "backgroundColor", "bgColor", "style.fill", "style.fillColor"], "#ffffff"), "#ffffff"),
+            borderColor: sanitizeCssColor(readString(item, ["strokeColor", "lineColor", "borderColor", "style.stroke", "style.strokeColor"], "#64748b"), "#64748b"),
             borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth", "style.strokeWidth"], 2)),
             borderStyle: readString(item, ["borderStyle", "lineStyle", "style.strokeStyle"], "solid"),
-            url: readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], "")
+            url: (function(raw) { return /^https?:\/\//i.test(raw) ? raw : ""; })(readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], ""))
         };
 
         if (node.type === "image") {
@@ -3368,7 +3376,7 @@ async function importJsonFile(e) {
             alert("Lucidchart JSON imported successfully (best effort conversion).");
         }
     } catch (err) {
-        alert("Error parsing file: " + err.message + " | build=" + APP_BUILD);
+        alert("Error parsing file: " + err.message);
     } finally {
         fileImportInput.value = "";
     }
@@ -3459,7 +3467,44 @@ function initGoogleClient() {
     }
     
     try {
-        // Initialize GIS Login client
+        // Initialize GIS Login client – callback is kept inside the closure to avoid global exposure
+        const handleGoogleSignInCallback = (response) => {
+            try {
+                const payload = decodeJwt(response.credential);
+
+                if (!isValidGoogleJwtPayload(payload)) {
+                    alert("Access Denied:\nInvalid or expired credential.");
+                    signOutGoogle();
+                    return;
+                }
+
+                if (!isAllowedGoogleDomain(payload)) {
+                    alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
+                    signOutGoogle();
+                    return;
+                }
+                
+                userProfile = payload;
+                
+                // Update user UI card
+                document.getElementById("google-sign-in-btn").style.display = "none";
+                const profileCard = document.getElementById("user-profile");
+                profileCard.style.display = "flex";
+                document.getElementById("user-avatar").src = payload.picture;
+                document.getElementById("user-name").textContent = payload.name;
+                document.getElementById("user-email").textContent = payload.email;
+                
+                document.getElementById("google-sign-out").onclick = signOutGoogle;
+                
+                // Request Drive Access Token next
+                if (tokenClient) {
+                    tokenClient.requestAccessToken({ prompt: 'consent', hint: payload.email });
+                }
+            } catch (e) {
+                alert("Failed to sign in: " + e.message);
+            }
+        };
+
         google.accounts.id.initialize({
             client_id: googleClientId,
             callback: handleGoogleSignInCallback,
@@ -3492,7 +3537,7 @@ function initGoogleClient() {
     }
 }
 
-// Decode GIS JWT token payload client side
+// Decode GIS JWT token payload client side (display only – not a substitute for server-side verification)
 function decodeJwt(token) {
     const base64Url = token.split('.')[1];
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -3503,35 +3548,14 @@ function decodeJwt(token) {
     return JSON.parse(jsonPayload);
 }
 
-function handleGoogleSignInCallback(response) {
-    try {
-        const payload = decodeJwt(response.credential);
-
-        if (!isAllowedGoogleDomain(payload)) {
-            alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
-            signOutGoogle();
-            return;
-        }
-        
-        userProfile = payload;
-        
-        // Update user UI card
-        document.getElementById("google-sign-in-btn").style.display = "none";
-        const profileCard = document.getElementById("user-profile");
-        profileCard.style.display = "flex";
-        document.getElementById("user-avatar").src = payload.picture;
-        document.getElementById("user-name").textContent = payload.name;
-        document.getElementById("user-email").textContent = payload.email;
-        
-        document.getElementById("google-sign-out").onclick = signOutGoogle;
-        
-        // Request Drive Access Token next
-        if (tokenClient) {
-            tokenClient.requestAccessToken({ prompt: 'consent', hint: payload.email });
-        }
-    } catch (e) {
-        alert("Failed to sign in: " + e.message);
-    }
+function isValidGoogleJwtPayload(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    const now = Math.floor(Date.now() / 1000);
+    const validIssuers = ["accounts.google.com", "https://accounts.google.com"];
+    if (!validIssuers.includes(String(payload.iss || ""))) return false;
+    if (payload.exp && Number(payload.exp) < now) return false;
+    if (googleClientId && String(payload.aud || "") !== googleClientId) return false;
+    return true;
 }
 
 function signOutGoogle() {
@@ -3696,7 +3720,11 @@ async function openGoogleDriveExplorer() {
         });
     } catch(e) {
         const errorColor = resolveCssColorVar("--accent-danger", "#ef4444");
-        gdriveFilesContainer.innerHTML = `<div class="empty-state" style="color: ${errorColor}">Error loading files: ${e.message}</div>`;
+        const errDiv = document.createElement("div");
+        errDiv.className = "empty-state";
+        errDiv.style.color = errorColor;
+        errDiv.textContent = "Error loading files: " + e.message;
+        gdriveFilesContainer.replaceChildren(errDiv);
     }
 }
 
