@@ -385,7 +385,7 @@ function updateDriveActionUi() {
     if (profileCard) profileCard.style.display = userProfile ? "flex" : "none";
     if (driveActions) driveActions.style.display = accessToken ? "flex" : "none";
     if (btnTopbarGoogleSignIn) btnTopbarGoogleSignIn.style.display = accessToken ? "none" : "inline-flex";
-    if (btnTopbarSaveGdrive) btnTopbarSaveGdrive.disabled = !accessToken;
+    if (btnTopbarSaveGdrive) btnTopbarSaveGdrive.disabled = false;
 
     if (accessToken && userProfile && userProfile.email) {
         setDriveConnectionStatus(`Drive connected: ${userProfile.email}`, "connected");
@@ -2868,11 +2868,9 @@ function handleNewFlowchart() {
 
 // --- Local browser saves manager ---
 function handleSaveLocal() {
-    const isFirstLocalSave = !currentLocalSaveName;
-    const name = prompt("Enter a workspace name for this flowchart:", currentLocalSaveName || currentDocName);
-    if (name === null) return;
-    
-    const trimmed = name.trim() || "My Flowchart";
+    const suggestedName = (currentLocalSaveName || currentDocName || `Flowchart ${new Date().toISOString().slice(0, 10)}`).trim();
+    const trimmed = suggestedName || `Flowchart ${new Date().toISOString().slice(0, 10)}`;
+
     currentLocalSaveName = trimmed;
     currentDocName = trimmed;
     docTitle.textContent = trimmed;
@@ -2888,14 +2886,6 @@ function handleSaveLocal() {
     localStorage.setItem("flowcraft_local_saves", JSON.stringify(saves));
     saveStatus.textContent = "Saved locally";
     loadLocalFilesList();
-    alert(`Project "${trimmed}" saved locally!`);
-
-    if (isFirstLocalSave) {
-        const shouldDownload = confirm("Do you want to choose a save location and export this as a JSON file now?");
-        if (shouldDownload) {
-            exportJsonFile({ forcePrompt: true });
-        }
-    }
 }
 
 function loadLocalSave(name) {
@@ -3494,15 +3484,26 @@ function startGoogleSignIn() {
         return;
     }
 
-    if (typeof google === "undefined" || !google.accounts || !google.accounts.id) {
+    if (typeof google === "undefined" || !google.accounts || !google.accounts.oauth2) {
         alert("Google Identity Services kunde inte laddas. Ladda om sidan och försök igen.");
         return;
     }
 
     initGoogleClient();
-    const signInContainer = document.getElementById("google-sign-in-btn");
-    if (signInContainer) signInContainer.style.display = "block";
-    google.accounts.id.prompt();
+    if (!tokenClient) {
+        alert("Could not initialize Google OAuth client.");
+        return;
+    }
+
+    try {
+        tokenClient.requestAccessToken({
+            prompt: userProfile ? "" : "consent",
+            hint: userProfile?.email
+        });
+    } catch (error) {
+        saveStatus.textContent = "Google popup blocked; allow popups for this site";
+        alert("Google sign-in popup was blocked. Allow popups for this site and try again.");
+    }
 }
 
 // Initialize the Google OAuth & GIS sign-in button
@@ -3515,36 +3516,44 @@ function initGoogleClient() {
     }
     
     try {
-        // Initialize GIS Login client
-        google.accounts.id.initialize({
-            client_id: googleClientId,
-            callback: handleGoogleSignInCallback,
-            hd: ALLOWED_GOOGLE_DOMAIN
-        });
-        
-        const signInContainer = document.getElementById("google-sign-in-btn");
-        if (signInContainer) {
-            google.accounts.id.renderButton(
-                signInContainer,
-                { theme: "outline", size: "large" }
-            );
-        }
-        
-        // Initialize token client for Drive API OAuth scope
+        // Initialize token client for Drive API OAuth scope.
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: googleClientId,
-            scope: "https://www.googleapis.com/auth/drive.file",
-            callback: (resp) => {
-                // Extra safety: never keep token unless user is validated for allowed domain.
-                if (resp && resp.access_token && isAllowedGoogleDomain(userProfile)) {
-                    accessToken = resp.access_token;
-                    persistDriveSession();
-                    updateDriveActionUi();
-                    saveStatus.textContent = "Google Drive Connected";
-                } else {
+            scope: "openid email profile https://www.googleapis.com/auth/drive.file",
+            callback: async (resp) => {
+                if (!resp || !resp.access_token) {
                     accessToken = "";
                     clearPersistedDriveSession();
                     updateDriveActionUi();
+                    return;
+                }
+
+                try {
+                    const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                        headers: { Authorization: `Bearer ${resp.access_token}` }
+                    });
+                    if (!profileResponse.ok) throw new Error("Could not load Google user profile.");
+
+                    const profile = await profileResponse.json();
+                    if (!isAllowedGoogleDomain(profile)) {
+                        alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
+                        accessToken = "";
+                        userProfile = null;
+                        clearPersistedDriveSession();
+                        updateDriveActionUi();
+                        return;
+                    }
+
+                    accessToken = resp.access_token;
+                    userProfile = profile;
+                    persistDriveSession();
+                    updateDriveActionUi();
+                    saveStatus.textContent = "Google Drive Connected";
+                } catch (error) {
+                    accessToken = "";
+                    clearPersistedDriveSession();
+                    updateDriveActionUi();
+                    alert("Failed to sign in: " + error.message);
                 }
             }
         });
@@ -3553,44 +3562,8 @@ function initGoogleClient() {
     }
 }
 
-// Decode GIS JWT token payload client side
-function decodeJwt(token) {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-
-    return JSON.parse(jsonPayload);
-}
-
-function handleGoogleSignInCallback(response) {
-    try {
-        const payload = decodeJwt(response.credential);
-
-        if (!isAllowedGoogleDomain(payload)) {
-            alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
-            signOutGoogle();
-            return;
-        }
-        
-        userProfile = payload;
-        updateDriveActionUi();
-        
-        const signOutButton = document.getElementById("google-sign-out");
-        if (signOutButton) signOutButton.onclick = signOutGoogle;
-        
-        // Request Drive Access Token next
-        if (tokenClient) {
-            tokenClient.requestAccessToken({ prompt: 'consent', hint: payload.email });
-        }
-    } catch (e) {
-        alert("Failed to sign in: " + e.message);
-    }
-}
-
 function signOutGoogle() {
-    const revokedEmail = userProfile && userProfile.email ? userProfile.email : "";
+    const revokedToken = accessToken;
     userProfile = null;
     accessToken = "";
     clearPersistedDriveSession();
@@ -3600,8 +3573,8 @@ function signOutGoogle() {
     currentDriveFileId = null;
     
     // Revoke token if exists
-    if (revokedEmail) {
-        google.accounts.id.revoke(revokedEmail, () => {});
+    if (revokedToken && typeof google !== "undefined" && google.accounts?.oauth2) {
+        google.accounts.oauth2.revoke(revokedToken, () => {});
     }
 }
 
