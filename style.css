@@ -306,6 +306,13 @@ body.login-page html {
     font-family: inherit;
 }
 
+.btn:disabled,
+.topbar-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
 .btn-sm {
     padding: 6px 10px;
     font-size: 0.8rem;
@@ -651,13 +658,14 @@ body.login-page html {
 
 /* Topbar Header */
 .topbar {
-    height: 60px;
+    min-height: 60px;
     background-color: rgba(255, 255, 255, 0.85);
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 24px;
+    padding: 10px 24px;
+    gap: 12px;
     z-index: 4;
     backdrop-filter: blur(10px);
     box-shadow: var(--shadow-sm);
@@ -667,6 +675,8 @@ body.login-page html {
     display: flex;
     align-items: baseline;
     gap: 10px;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .doc-title {
@@ -692,10 +702,30 @@ body.login-page html {
     font-weight: 500;
 }
 
+.drive-connection-status[data-state="connected"] {
+    color: var(--accent-success);
+}
+
+.drive-connection-status[data-state="warning"] {
+    color: #b45309;
+}
+
+.drive-connection-status[data-state="disabled"] {
+    color: var(--accent-danger);
+}
+
 .topbar-actions {
     display: flex;
     align-items: center;
     gap: 4px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.topbar-action-btn {
+    min-height: 34px;
+    padding: 8px 12px;
+    white-space: nowrap;
 }
 
 .topbar-btn {
@@ -730,6 +760,32 @@ body.login-page html {
     height: 18px;
     background-color: var(--border-color);
     margin: 0 8px;
+}
+
+@media (max-width: 960px) {
+    .topbar {
+        align-items: flex-start;
+        padding: 12px 16px;
+    }
+
+    .topbar-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    .topbar-action-btn span {
+        display: none;
+    }
+
+    .topbar-action-btn {
+        padding: 8px 10px;
+    }
+
+    .topbar-divider {
+        margin: 0 4px;
+    }
 }
 
 /* Canvas Viewport */

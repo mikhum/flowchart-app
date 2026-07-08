@@ -13,8 +13,8 @@ It supports drag-and-drop shape creation, connector routing, local saves, Google
 - Text editing and positioning inside shapes
 - Local workspace save/load in browser storage
 - Google Drive open/save/trash support (OAuth)
-- Export to PDF, Word (.docx), and FlowCraft JSON
-- Import from FlowCraft JSON, Lucidchart-like JSON (best effort), and VSDX (best effort)
+- Export to PDF and FlowCraft JSON
+- Import from FlowCraft JSON and Lucidchart-like JSON (best effort)
 - Build badge support via generated build metadata
 
 ## Tech Stack
@@ -22,15 +22,13 @@ It supports drag-and-drop shape creation, connector routing, local saves, Google
 - Plain JavaScript (no frontend framework)
 - HTML/CSS UI
 - jsPDF for PDF export
-- docx for Word export
-- JSZip for VSDX parsing
 - Google Identity Services + Google Drive API
 
 ## Project Structure
 
 - `index.html` - UI structure and modals
 - `style.css` - styles and layer behavior
-- `app.js` - editor logic, rendering, import/export, Google integration
+- `app.js` - editor logic, rendering, export, Google integration, and imported file boot handling
 - `app-config.js` - shared runtime config (OAuth client ID and allowed origins)
 - `scripts/write-build-info.js` - generates `build-info.json`
 - `.github/workflows/deploy-pages.yml` - GitHub Pages deployment workflow

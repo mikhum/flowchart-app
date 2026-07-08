@@ -23,6 +23,9 @@
                 <p class="login-subtitle">Sign in once, browse your saved Google Drive flowcharts, and open each editor session in its own tab.</p>
             </div>
             <div class="login-hero-actions">
+                <button class="btn btn-outline" id="btn-import-json">
+                    <i class="fa-solid fa-file-import"></i> Import JSON
+                </button>
                 <button class="btn btn-primary" id="btn-open-new-flowchart">
                     <i class="fa-solid fa-plus"></i> New flowchart
                 </button>
@@ -74,6 +77,8 @@
         </section>
     </div>
 
+    <input type="file" id="file-import-input" accept=".json,.flowchart" style="display: none;">
+
     <div class="modal-overlay" id="google-config-modal">
         <div class="modal">
             <div class="modal-header">
@@ -99,6 +104,6 @@
 
     <script src="app-config.js"></script>
     <script src="auth-drive.js?v=20260708-login-shell-1"></script>
-    <script src="login.js?v=20260708-login-shell-1"></script>
+    <script src="login.js?v=20260708-login-shell-2"></script>
 </body>
 </html>

@@ -1,11 +1,15 @@
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
 const FLOWCRAFT_EDITOR_BOOT_TTL_MS = 1000 * 60 * 30;
+const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
+const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 50;
 
 const btnGoogleSignIn = document.getElementById("btn-google-sign-in");
 const btnGoogleSignOut = document.getElementById("google-sign-out");
 const btnConfigureGoogle = document.getElementById("btn-configure-google");
+const btnImportJson = document.getElementById("btn-import-json");
 const btnOpenNewFlowchart = document.getElementById("btn-open-new-flowchart");
 const btnRefreshDrive = document.getElementById("btn-refresh-drive");
+const fileImportInput = document.getElementById("file-import-input");
 const userProfileCard = document.getElementById("user-profile");
 const userAvatar = document.getElementById("user-avatar");
 const userName = document.getElementById("user-name");
@@ -52,6 +56,37 @@ function persistEditorBootPayload(payload) {
         payload
     }));
     return key;
+}
+
+function persistDriveSessionFromState(state) {
+    if (!state || !state.driveReady || !state.userProfile) {
+        localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
+        return;
+    }
+
+    localStorage.setItem(FLOWCRAFT_DRIVE_SESSION_KEY, JSON.stringify({
+        createdAt: Date.now(),
+        accessToken: state.accessToken,
+        userProfile: state.userProfile
+    }));
+}
+
+function clearPersistedDriveSession() {
+    localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
+}
+
+function cleanupStaleDriveSession() {
+    try {
+        const raw = localStorage.getItem(FLOWCRAFT_DRIVE_SESSION_KEY);
+        if (!raw) return;
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || !parsed.createdAt || Date.now() - Number(parsed.createdAt) > FLOWCRAFT_DRIVE_SESSION_TTL_MS) {
+            clearPersistedDriveSession();
+        }
+    } catch (error) {
+        clearPersistedDriveSession();
+    }
 }
 
 function openLoadingEditorTab() {
@@ -126,6 +161,7 @@ async function openDriveFileInEditor(file) {
     }
 
     try {
+        persistDriveSessionFromState(window.FlowAuthDrive.getState());
         const content = await window.FlowAuthDrive.fetchDriveFlowchart(file.id);
         const bootKey = persistEditorBootPayload({
             type: "drive-file",
@@ -141,8 +177,37 @@ async function openDriveFileInEditor(file) {
 }
 
 function openNewFlowchart() {
+    persistDriveSessionFromState(window.FlowAuthDrive.getState());
     const editorTab = window.open("editor.html?mode=new", "_blank");
     if (!editorTab) alert("Please allow popups to open the editor in a new tab.");
+}
+
+async function importJsonToEditor(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const editorTab = openLoadingEditorTab();
+    if (!editorTab) {
+        alert("Please allow popups to open the editor in a new tab.");
+        fileImportInput.value = "";
+        return;
+    }
+
+    try {
+        const content = JSON.parse(await file.text());
+        persistDriveSessionFromState(window.FlowAuthDrive.getState());
+        const bootKey = persistEditorBootPayload({
+            type: "imported-json",
+            fileName: file.name,
+            content
+        });
+        editorTab.location.replace(`editor.html?bootKey=${encodeURIComponent(bootKey)}`);
+    } catch (error) {
+        editorTab.close();
+        alert("Could not import JSON: " + error.message);
+    } finally {
+        fileImportInput.value = "";
+    }
 }
 
 function updateConfigUiState(state) {
@@ -166,6 +231,12 @@ function renderAuthState(state) {
     btnGoogleSignIn.style.display = state.signedIn ? "none" : "inline-flex";
     userProfileCard.style.display = state.signedIn ? "flex" : "none";
     btnRefreshDrive.disabled = !state.driveReady;
+
+    if (state.driveReady) {
+        persistDriveSessionFromState(state);
+    } else {
+        clearPersistedDriveSession();
+    }
 
     if (state.signedIn && state.userProfile) {
         userAvatar.src = state.userProfile.picture || "";
@@ -193,8 +264,10 @@ function setupEventListeners() {
         }
     });
     btnGoogleSignOut.addEventListener("click", () => window.FlowAuthDrive.signOut());
+    btnImportJson.addEventListener("click", () => fileImportInput.click());
     btnOpenNewFlowchart.addEventListener("click", openNewFlowchart);
     btnRefreshDrive.addEventListener("click", refreshDriveList);
+    fileImportInput.addEventListener("change", importJsonToEditor);
     btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
     closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
     btnSaveConfig.addEventListener("click", () => {
@@ -217,6 +290,7 @@ function setupEventListeners() {
 
 document.addEventListener("DOMContentLoaded", async () => {
     cleanupStaleBootPayloads();
+    cleanupStaleDriveSession();
     setupEventListeners();
     await window.FlowAuthDrive.init({ onStateChange: renderAuthState });
 });

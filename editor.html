@@ -14,15 +14,13 @@
     
     <!-- External libraries for exports and captures -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     
     <!-- Google Identity Services client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
     <div class="app-container">
-        <!-- Sidebar: Library, Google Drive and Files -->
+        <!-- Sidebar: Library, local workspaces, and exports -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
@@ -35,41 +33,6 @@
             </div>
 
             <div class="sidebar-content">
-                <!-- Google Drive Integration & Account Status -->
-                <div class="sidebar-section">
-                    <h3>Google Integration</h3>
-                    <div class="google-auth-container">
-                        <div id="google-sign-in-btn"></div>
-                        <button class="btn btn-primary" id="btn-google-sign-in">
-                            <i class="fa-brands fa-google"></i> Logga in med Google
-                        </button>
-                        <div class="user-profile-card" id="user-profile" style="display: none;">
-                            <img src="" alt="Profile" id="user-avatar" class="user-avatar">
-                            <div class="user-info">
-                                <div class="user-name" id="user-name">Not Signed In</div>
-                                <div class="user-email" id="user-email">domain restricted</div>
-                            </div>
-                            <button class="btn-icon-danger" id="google-sign-out" title="Sign Out">
-                                <i class="fa-solid fa-right-from-bracket"></i>
-                            </button>
-                        </div>
-                        <div class="google-drive-actions" id="gdrive-actions" style="display: none;">
-                            <button class="btn btn-primary" id="btn-save-gdrive">
-                                <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
-                            </button>
-                            <button class="btn btn-outline" id="btn-open-gdrive">
-                                <i class="fa-solid fa-folder-open"></i> Open from Drive
-                            </button>
-                        </div>
-                        <button class="btn btn-outline btn-sm" id="btn-configure-google">
-                            <i class="fa-solid fa-gears"></i> OAuth Credentials
-                        </button>
-                        <div class="help-text" style="margin-top: 8px;">
-                            Logga in med ett konto från <strong>hummel.se</strong>.
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Shapes & Network Palette -->
                 <div class="sidebar-section">
                     <h3>Flowchart Library</h3>
@@ -140,9 +103,9 @@
                         <button class="btn btn-outline" id="btn-new-flowchart">
                             <i class="fa-solid fa-plus"></i> New Flowchart
                         </button>
-                        <button class="btn btn-outline" id="btn-save-local">
-                            <i class="fa-solid fa-hdd"></i> Save Locally
-                        </button>
+                    </div>
+                    <div class="help-text">
+                        Use the header bar to save the current flowchart locally. Saved local workspaces stay listed here.
                     </div>
                     <div class="saved-maps-list" id="local-files-list">
                         <div class="empty-state">No local saves.</div>
@@ -153,22 +116,12 @@
                 <div class="sidebar-section">
                     <h3>Export Options</h3>
                     <div class="button-group-vertical">
-                        <button class="btn btn-secondary" id="btn-export-word">
-                            <i class="fa-solid fa-file-word"></i> Download Word (.docx)
-                        </button>
                         <button class="btn btn-secondary" id="btn-export-pdf">
                             <i class="fa-solid fa-file-pdf"></i> Download PDF (.pdf)
                         </button>
                         <button class="btn btn-outline" id="btn-export-json">
                             <i class="fa-solid fa-file-code"></i> Export JSON
                         </button>
-                        <button class="btn btn-outline" id="btn-import-json">
-                            <i class="fa-solid fa-file-import"></i> Import JSON
-                        </button>
-                        <button class="btn btn-outline" id="btn-import-vsdx">
-                            <i class="fa-solid fa-diagram-project"></i> Import VSDX
-                        </button>
-                        <input type="file" id="file-import-input" accept=".json,.flowchart,.vsdx" style="display: none;">
                     </div>
                 </div>
             </div>
@@ -190,9 +143,23 @@
                 <div class="topbar-title-section">
                     <span class="doc-title" id="doc-title" contenteditable="true">Untitled Flowchart</span>
                     <span class="save-status" id="save-status">Saved locally</span>
+                    <span class="save-status drive-connection-status" id="drive-connection-status">Local save ready</span>
                     <span class="save-status" id="build-id">Commit local-dev</span>
                 </div>
                 <div class="topbar-actions">
+                    <button class="btn btn-primary topbar-action-btn" id="btn-topbar-save-local" title="Save this flowchart locally">
+                        <i class="fa-solid fa-hdd"></i>
+                        <span>Save Local</span>
+                    </button>
+                    <button class="btn btn-outline topbar-action-btn" id="btn-topbar-save-gdrive" title="Save this flowchart to Google Drive">
+                        <i class="fa-solid fa-cloud-arrow-up"></i>
+                        <span>Save Drive</span>
+                    </button>
+                    <button class="btn btn-outline topbar-action-btn" id="btn-topbar-google-sign-in" title="Connect Google Drive">
+                        <i class="fa-brands fa-google"></i>
+                        <span>Connect Drive</span>
+                    </button>
+                    <div class="topbar-divider"></div>
                     <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
                     <div class="topbar-divider"></div>
@@ -508,6 +475,6 @@
     </div>
 
     <script src="app-config.js"></script>
-    <script src="app.js?v=20260708-editor-shell-1"></script>
+    <script src="app.js?v=20260708-editor-shell-2"></script>
 </body>
 </html>
