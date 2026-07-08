@@ -244,11 +244,9 @@ const btnSnapGrid = document.getElementById("btn-snap-grid");
 const btnClearCanvas = document.getElementById("btn-clear-canvas");
 
 // Import/Export
-const btnExportWord = document.getElementById("btn-export-word");
 const btnExportPDF = document.getElementById("btn-export-pdf");
 const btnExportJson = document.getElementById("btn-export-json");
 const btnImportJson = document.getElementById("btn-import-json");
-const btnImportVsdx = document.getElementById("btn-import-vsdx");
 const fileImportInput = document.getElementById("file-import-input");
 
 // Local Workspaces
@@ -662,15 +660,9 @@ function setupEventListeners() {
     btnSaveLocal.addEventListener("click", handleSaveLocal);
     
     // Document Exports
-    btnExportWord.addEventListener("click", exportToWord);
     btnExportPDF.addEventListener("click", exportToPDF);
     btnExportJson.addEventListener("click", exportJsonFile);
     btnImportJson.addEventListener("click", () => {
-        fileImportInput.accept = ".json,.flowchart";
-        fileImportInput.click();
-    });
-    btnImportVsdx.addEventListener("click", () => {
-        fileImportInput.accept = ".vsdx";
         fileImportInput.click();
     });
     fileImportInput.addEventListener("change", importJsonFile);
@@ -3089,300 +3081,6 @@ function toArray(val) {
     return Array.isArray(val) ? val : [val];
 }
 
-function parseMaybeNumber(value, fallback = NaN) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
-}
-
-function hasLocalName(el, name) {
-    return !!el && el.nodeType === 1 && String(el.localName || el.nodeName || "").toLowerCase() === String(name).toLowerCase();
-}
-
-function getDescendantsByLocalName(root, name) {
-    if (!root || !root.getElementsByTagName) return [];
-    const all = root.getElementsByTagName("*");
-    const out = [];
-    for (let i = 0; i < all.length; i += 1) {
-        if (hasLocalName(all[i], name)) out.push(all[i]);
-    }
-    return out;
-}
-
-function getFirstDescendantByLocalName(root, name) {
-    const matches = getDescendantsByLocalName(root, name);
-    return matches.length ? matches[0] : null;
-}
-
-function getDirectChildrenByLocalName(root, name) {
-    if (!root || !root.children) return [];
-    const out = [];
-    for (let i = 0; i < root.children.length; i += 1) {
-        if (hasLocalName(root.children[i], name)) out.push(root.children[i]);
-    }
-    return out;
-}
-
-function getPageTopLevelShapes(pageRoot) {
-    const directShapesContainers = getDirectChildrenByLocalName(pageRoot, "Shapes");
-    const shapesContainer = directShapesContainers.length
-        ? directShapesContainers[0]
-        : getFirstDescendantByLocalName(pageRoot, "Shapes");
-    if (!shapesContainer) return [];
-    return getDirectChildrenByLocalName(shapesContainer, "Shape");
-}
-
-function getDirectChildShapes(shapeEl) {
-    const shapesContainers = getDirectChildrenByLocalName(shapeEl, "Shapes");
-    if (!shapesContainers.length) return [];
-    return getDirectChildrenByLocalName(shapesContainers[0], "Shape");
-}
-
-function hasChildShapes(shapeEl) {
-    return getDirectChildShapes(shapeEl).length > 0;
-}
-
-function getParentShapeElement(shapeEl) {
-    let curr = shapeEl ? shapeEl.parentElement : null;
-    while (curr) {
-        if (hasLocalName(curr, "Shape")) return curr;
-        curr = curr.parentElement;
-    }
-    return null;
-}
-
-function detectFlowcraftShapeTypeFromVisio(shapeEl) {
-    const hint = String(shapeEl?.getAttribute("NameU") || shapeEl?.getAttribute("Name") || "").toLowerCase();
-    if (hint.includes("mindmapcloud") || hint.includes("cloud")) return "cloud";
-    if (hint.includes("bpmnactivity")) return "terminator";
-    if (hint.includes("stickiesstickynoteblock") || hint.includes("sticky")) return "document";
-    if (hint.includes("defaultsquareblock")) return "rectangle";
-    if (hint.includes("userimage")) return "rectangle";
-    if (hint.includes("decision") || hint.includes("diamond")) return "diamond";
-    if (hint.includes("terminator") || hint.includes("start") || hint.includes("end")) return "terminator";
-    if (hint.includes("database") || hint.includes("cylinder") || hint.includes("datastore")) return "cylinder";
-    if (hint.includes("document")) return "document";
-    if (hint.includes("hexagon") || hint.includes("preparation")) return "hexagon";
-    if (hint.includes("circle") || hint.includes("connector")) return "circle";
-    if (hint.includes("user") || hint.includes("person")) return "rectangle";
-    return "rectangle";
-}
-
-function getVisioCellValue(containerEl, cellName) {
-    if (!containerEl) return undefined;
-    const directCells = getDirectChildrenByLocalName(containerEl, "Cell");
-    const match = directCells.find(cell => String(cell.getAttribute("N") || "") === cellName);
-    return match ? match.getAttribute("V") : undefined;
-}
-
-function getVisioShapeCellValue(shapeEl, cellName) {
-    const xform = getFirstDescendantByLocalName(shapeEl, "XForm");
-    const fromXform = getVisioCellValue(xform, cellName);
-    if (fromXform !== undefined) return fromXform;
-    return getVisioCellValue(shapeEl, cellName);
-}
-
-function buildPortByPosition(fromNode, toNode) {
-    return getPortToward(fromNode, toNode);
-}
-
-async function parseVsdxToFlowcraft(file) {
-    if (typeof JSZip === "undefined") {
-        throw new Error("VSDX library not loaded. Refresh the page and try again.");
-    }
-
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
-    const pagePaths = Object.keys(zip.files)
-        .filter(p => /^visio\/pages\/page\d+\.xml$/i.test(p))
-        .sort((a, b) => {
-            const ai = parseInt((a.match(/page(\d+)\.xml/i) || ["", "0"])[1], 10);
-            const bi = parseInt((b.match(/page(\d+)\.xml/i) || ["", "0"])[1], 10);
-            return ai - bi;
-        });
-
-    if (pagePaths.length === 0) {
-        throw new Error("No Visio page XML found in VSDX.");
-    }
-
-    const nodesOut = {};
-    const linesOut = [];
-    let globalLineCounter = 0;
-
-    for (let pageIndex = 0; pageIndex < pagePaths.length; pageIndex += 1) {
-        const pagePath = pagePaths[pageIndex];
-        const xmlText = await zip.file(pagePath).async("string");
-        const xmlDoc = new DOMParser().parseFromString(xmlText, "application/xml");
-        const parseErrors = xmlDoc.getElementsByTagName("parsererror");
-        if (parseErrors && parseErrors.length > 0) {
-            throw new Error(`Failed to parse VSDX XML at ${pagePath}`);
-        }
-
-        const pageRoot = xmlDoc.documentElement;
-        const pageSheet = getFirstDescendantByLocalName(pageRoot, "PageSheet");
-        const pageHeightIn = parseMaybeNumber(getVisioCellValue(pageSheet, "PageHeight"), 8.5);
-        const pageWidthIn = parseMaybeNumber(getVisioCellValue(pageSheet, "PageWidth"), 11);
-        const pageHeightPx = pageHeightIn * 96;
-        const pageWidthPx = pageWidthIn * 96;
-        const pageYOffset = pageIndex * (pageHeightPx + 300);
-
-        const allShapes = getDescendantsByLocalName(pageRoot, "Shape");
-        const topLevelShapes = getPageTopLevelShapes(pageRoot);
-        const candidateShapes = topLevelShapes.length ? topLevelShapes : allShapes;
-        const shapeParentById = {};
-        const shapeById = {};
-
-        allShapes.forEach(shape => {
-            const sid = String(shape.getAttribute("ID") || "").trim();
-            if (!sid) return;
-            shapeById[sid] = shape;
-            const parentShape = getParentShapeElement(shape);
-            if (parentShape) {
-                const parentId = String(parentShape.getAttribute("ID") || "").trim();
-                if (parentId) shapeParentById[sid] = parentId;
-            }
-        });
-
-        const connectorIds = new Set();
-
-        allShapes.forEach(shape => {
-            const id = String(shape.getAttribute("ID") || "").trim();
-            if (!id) return;
-
-            const oneD = String(getVisioShapeCellValue(shape, "OneD") || "").trim();
-            const nameHint = String(shape.getAttribute("NameU") || shape.getAttribute("Name") || "").toLowerCase();
-            const isConnector = oneD === "1" || nameHint.includes("connector") || nameHint.includes("dynamic connector");
-            if (isConnector) connectorIds.add(id);
-        });
-
-        candidateShapes.forEach(shape => {
-            const id = String(shape.getAttribute("ID") || "").trim();
-            if (!id || nodesOut[id]) return;
-
-            if (connectorIds.has(id)) return;
-
-            const pinX = parseMaybeNumber(getVisioShapeCellValue(shape, "PinX"), NaN);
-            const pinY = parseMaybeNumber(getVisioShapeCellValue(shape, "PinY"), NaN);
-            const width = Math.max(60, parseMaybeNumber(getVisioShapeCellValue(shape, "Width"), 1.4) * 96);
-            const height = Math.max(30, parseMaybeNumber(getVisioShapeCellValue(shape, "Height"), 0.8) * 96);
-            const locPinX = parseMaybeNumber(getVisioShapeCellValue(shape, "LocPinX"), width / 192) * 96;
-            const locPinY = parseMaybeNumber(getVisioShapeCellValue(shape, "LocPinY"), height / 192) * 96;
-
-            let x = 0;
-            let y = 0;
-            if (Number.isFinite(pinX)) {
-                // Visio PinX is anchored by LocPinX inside the shape. Convert to center in top-origin space.
-                x = (pinX * 96) - locPinX + (width / 2);
-            }
-            if (Number.isFinite(pinY)) {
-                // Visio Y grows upward; also adjust for LocPinY to align shape center.
-                y = pageHeightPx - ((pinY * 96) - locPinY + (height / 2));
-            }
-
-            x = snap(x - pageWidthPx / 2);
-            y = snap(y - pageHeightPx / 2 + pageYOffset);
-
-            const textEl = getFirstDescendantByLocalName(shape, "Text");
-            const text = textEl ? String(textEl.textContent || "").replace(/\s+/g, " ").trim() : "";
-            const nameHint = String(shape.getAttribute("NameU") || shape.getAttribute("Name") || "").toLowerCase();
-            const nodeType = (getFirstDescendantByLocalName(shape, "ForeignData") || nameHint.includes("userimage")) ? "image" : "shape";
-
-            // Ignore tiny helper leaves that are not user-visible symbols.
-            if (nodeType === "shape" && width < 20 && height < 20 && !text) return;
-
-            const node = {
-                id,
-                type: nodeType,
-                shapeType: detectFlowcraftShapeTypeFromVisio(shape),
-                x,
-                y,
-                width: snap(width),
-                height: snap(height),
-                text: text || String(shape.getAttribute("NameU") || shape.getAttribute("Name") || `Shape ${id}`),
-                textOffset: { x: 0, y: 0 },
-                textSize: 14,
-                bgColor: nodeType === "image" ? "transparent" : "#ffffff",
-                borderColor: nodeType === "image" ? "transparent" : "#64748b",
-                borderWidth: nodeType === "image" ? 0 : 2,
-                borderStyle: "solid",
-                url: ""
-            };
-
-            nodesOut[id] = node;
-        });
-
-        const importedNodeIds = new Set(Object.keys(nodesOut));
-        const resolveNodeId = (rawId) => {
-            let curr = rawId;
-            const visited = new Set();
-            while (curr && !visited.has(curr)) {
-                if (importedNodeIds.has(curr)) return curr;
-                visited.add(curr);
-                curr = shapeParentById[curr];
-            }
-            return null;
-        };
-
-        const connects = getDescendantsByLocalName(pageRoot, "Connect");
-        const connectorMap = {};
-
-        connects.forEach(conn => {
-            const fromSheet = String(conn.getAttribute("FromSheet") || "").trim();
-            const toSheet = String(conn.getAttribute("ToSheet") || "").trim();
-            const fromCell = String(conn.getAttribute("FromCell") || "").toLowerCase();
-            const resolvedToNodeId = resolveNodeId(toSheet);
-
-            if (!fromSheet || !toSheet) return;
-            if (!connectorIds.has(fromSheet)) return;
-            if (!resolvedToNodeId || !nodesOut[resolvedToNodeId]) return;
-
-            if (!connectorMap[fromSheet]) connectorMap[fromSheet] = { fromId: null, toId: null };
-
-            if (fromCell.includes("begin")) {
-                connectorMap[fromSheet].fromId = resolvedToNodeId;
-            } else if (fromCell.includes("end")) {
-                connectorMap[fromSheet].toId = resolvedToNodeId;
-            } else if (!connectorMap[fromSheet].fromId) {
-                connectorMap[fromSheet].fromId = resolvedToNodeId;
-            } else if (!connectorMap[fromSheet].toId) {
-                connectorMap[fromSheet].toId = resolvedToNodeId;
-            }
-        });
-
-        Object.keys(connectorMap).forEach(connectorId => {
-            const entry = connectorMap[connectorId];
-            if (!entry?.fromId || !entry?.toId || entry.fromId === entry.toId) return;
-            const fromNode = nodesOut[entry.fromId];
-            const toNode = nodesOut[entry.toId];
-            if (!fromNode || !toNode) return;
-
-            globalLineCounter += 1;
-            linesOut.push({
-                id: `vsdx_line_${connectorId}_${globalLineCounter}`,
-                fromId: entry.fromId,
-                fromPort: buildPortByPosition(fromNode, toNode),
-                toId: entry.toId,
-                toPort: buildPortByPosition(toNode, fromNode),
-                lineType: "orthogonal",
-                lineStyle: "solid",
-                color: "#64748b",
-                thickness: 2.5,
-                hasArrow: "end"
-            });
-        });
-    }
-
-    if (Object.keys(nodesOut).length === 0) {
-        throw new Error("No shapes found in VSDX pages.");
-    }
-
-    return {
-        format: "flowcraft",
-        version: "1.0",
-        name: file.name.replace(/\.vsdx$/i, "") || "Imported VSDX Diagram",
-        nodes: nodesOut,
-        lines: linesOut
-    };
-}
-
 function getNearestNodeIdByPoint(x, y, nodeList) {
     if (!Number.isFinite(x) || !Number.isFinite(y) || nodeList.length === 0) return null;
     let bestId = null;
@@ -3648,20 +3346,12 @@ async function importJsonFile(e) {
     if (!file) return;
 
     try {
-        let normalized = null;
-        const isVsdx = /\.vsdx$/i.test(file.name);
-
-        if (isVsdx) {
-            const flowcraftData = await parseVsdxToFlowcraft(file);
-            normalized = { data: flowcraftData, source: "vsdx" };
-        } else {
-            const data = JSON.parse(await file.text());
-            normalized = normalizeImportedData(data);
-            if (!normalized) {
-                const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
-                alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
-                return;
-            }
+        const data = JSON.parse(await file.text());
+        const normalized = normalizeImportedData(data);
+        if (!normalized) {
+            const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
+            alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
+            return;
         }
 
         loadSessionData(normalized.data);
@@ -3676,8 +3366,6 @@ async function importJsonFile(e) {
             alert("Flowchart imported successfully!");
         } else if (normalized.source === "lucidchart") {
             alert("Lucidchart JSON imported successfully (best effort conversion).");
-        } else if (normalized.source === "vsdx") {
-            alert("VSDX imported successfully (best effort conversion).");
         }
     } catch (err) {
         alert("Error parsing file: " + err.message + " | build=" + APP_BUILD);
@@ -4639,82 +4327,6 @@ async function exportToPDF() {
         saveStatus.textContent = "Export complete";
     } catch(e) {
         alert("Failed to export PDF: " + e.message);
-        saveStatus.textContent = "Export failed";
-    }
-}
-
-async function exportToWord() {
-    saveStatus.textContent = "Exporting Word doc...";
-    try {
-        const capture = await getFlowchartCanvasImage();
-        
-        // Fetch base64 image data and convert to buffer
-        const response = await fetch(capture.imgData);
-        const blob = await response.blob();
-        const arrayBuffer = await blob.arrayBuffer();
-        
-        // Generate Docx structure
-        const doc = new docx.Document({
-            sections: [{
-                properties: {
-                    page: {
-                        size: {
-                            // landscape paper sizes in twips if image is wide
-                            orientation: capture.width > capture.height ? docx.PageOrientation.LANDSCAPE : docx.PageOrientation.PORTRAIT
-                        }
-                    }
-                },
-                children: [
-                    new docx.Paragraph({
-                        heading: docx.HeadingLevel.HEADING_1,
-                        spacing: { after: 120 },
-                        children: [
-                            new docx.TextRun({
-                                text: currentDocName,
-                                bold: true,
-                                font: "Outfit",
-                                size: 36 // 18pt
-                            })
-                        ]
-                    }),
-                    new docx.Paragraph({
-                        spacing: { after: 240 },
-                        children: [
-                            new docx.TextRun({
-                                text: `Exported on: ${new Date().toLocaleDateString()}`,
-                                italic: true,
-                                font: "Inter",
-                                color: "64748b"
-                            })
-                        ]
-                    }),
-                    new docx.Paragraph({
-                        children: [
-                            new docx.ImageRun({
-                                data: arrayBuffer,
-                                transformation: {
-                                    // Scale size down to fit standard page dimensions
-                                    width: Math.min(650, capture.width),
-                                    height: (Math.min(650, capture.width) / capture.width) * capture.height
-                                }
-                            })
-                        ]
-                    })
-                ]
-            }]
-        });
-        
-        docx.Packer.toBlob(doc).then(wordBlob => {
-            const downloadUrl = URL.createObjectURL(wordBlob);
-            const a = document.createElement("a");
-            a.href = downloadUrl;
-            a.download = currentDocName.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".docx";
-            a.click();
-            saveStatus.textContent = "Export complete";
-        });
-        
-    } catch(e) {
-        alert("Failed to export Word file: " + e.message);
         saveStatus.textContent = "Export failed";
     }
 }

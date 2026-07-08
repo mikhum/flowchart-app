@@ -14,8 +14,6 @@
     
     <!-- External libraries for exports and captures -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     
     <!-- Google Identity Services client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -142,9 +140,6 @@
                 <div class="sidebar-section">
                     <h3>Export Options</h3>
                     <div class="button-group-vertical">
-                        <button class="btn btn-secondary" id="btn-export-word">
-                            <i class="fa-solid fa-file-word"></i> Download Word (.docx)
-                        </button>
                         <button class="btn btn-secondary" id="btn-export-pdf">
                             <i class="fa-solid fa-file-pdf"></i> Download PDF (.pdf)
                         </button>
@@ -154,10 +149,7 @@
                         <button class="btn btn-outline" id="btn-import-json">
                             <i class="fa-solid fa-file-import"></i> Import JSON
                         </button>
-                        <button class="btn btn-outline" id="btn-import-vsdx">
-                            <i class="fa-solid fa-diagram-project"></i> Import VSDX
-                        </button>
-                        <input type="file" id="file-import-input" accept=".json,.flowchart,.vsdx" style="display: none;">
+                        <input type="file" id="file-import-input" accept=".json,.flowchart" style="display: none;">
                     </div>
                 </div>
             </div>
