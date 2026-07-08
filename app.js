@@ -1,5 +1,5 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
-const APP_BUILD = "local-dev";
+const APP_BUILD = "login-separated";
 const BUILD_INFO_PATH = "build-info.json";
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
 const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
