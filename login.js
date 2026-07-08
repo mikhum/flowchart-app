@@ -1,7 +1,7 @@
 ﻿// FlowCraft Login Page Logic
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
 const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
-const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 50;
+const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 2; // 2 minutes (short-lived handoff token)
 
 // --- DOM refs ---
 const btnNewFlowchart    = document.getElementById("btn-new-flowchart");
@@ -48,14 +48,17 @@ function persistDriveSession(state) {
 }
 
 function openEditorTab(url) {
-    const tab = window.open(url, "_blank");
+    const tab = window.open(url, "_blank", "noopener,noreferrer");
     if (!tab) alert("Please allow pop-ups for this site to open the editor in a new tab.");
     return tab;
 }
 
 // --- Drive file list ---
 function setFilesLoading(msg) {
-    driveFilesList.innerHTML = `<div class="empty-state">${msg}</div>`;
+    const div = document.createElement("div");
+    div.className = "empty-state";
+    div.textContent = msg;
+    driveFilesList.replaceChildren(div);
 }
 
 async function loadDriveFiles() {
