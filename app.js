@@ -679,13 +679,13 @@ function setupEventListeners() {
     closeHelpModal.addEventListener("click", () => showHelpModal(false));
     btnCloseHelp.addEventListener("click", () => showHelpModal(false));
     
-    btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
-    btnGoogleSignIn.addEventListener("click", startGoogleSignIn);
+    if (btnConfigureGoogle) btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
+    if (btnGoogleSignIn) btnGoogleSignIn.addEventListener("click", startGoogleSignIn);
     closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
     btnSaveConfig.addEventListener("click", saveGoogleConfig);
     btnClearConfig.addEventListener("click", clearGoogleConfig);
     
-    btnOpenGdrive.addEventListener("click", openGoogleDriveExplorer);
+    if (btnOpenGdrive) btnOpenGdrive.addEventListener("click", openGoogleDriveExplorer);
     btnSaveGdrive.addEventListener("click", saveToGoogleDrive);
     closeGdriveModal.addEventListener("click", () => showGdriveExplorer(false));
     btnCloseGdriveExplorer.addEventListener("click", () => showGdriveExplorer(false));
