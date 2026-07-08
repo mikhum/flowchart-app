@@ -98,11 +98,38 @@ function renderFileList(files) {
         info.appendChild(name);
         info.appendChild(date);
 
+        const actions = document.createElement("div");
+        actions.className = "drive-file-actions";
+
         const icon = document.createElement("i");
         icon.className = "fa-solid fa-arrow-up-right-from-square drive-file-open-icon";
 
+        const trashBtn = document.createElement("button");
+        trashBtn.className = "drive-file-trash-btn";
+        trashBtn.title = "Delete flowchart";
+        trashBtn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+        trashBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const displayName = file.name.replace(/\.(flowchart|json)$/, "");
+            if (!confirm(`Delete "${displayName}"? This cannot be undone.`)) return;
+            trashBtn.disabled = true;
+            try {
+                await window.FlowAuthDrive.deleteFlowchartFile(file.id);
+                item.remove();
+                if (!driveFilesList.querySelector(".drive-file-item")) {
+                    driveFilesList.innerHTML = '<div class="empty-state">No flowcharts saved in Drive yet.</div>';
+                }
+            } catch (err) {
+                alert("Could not delete: " + err.message);
+                trashBtn.disabled = false;
+            }
+        });
+
+        actions.appendChild(icon);
+        actions.appendChild(trashBtn);
+
         item.appendChild(info);
-        item.appendChild(icon);
+        item.appendChild(actions);
         item.addEventListener("click", () => openDriveFile(file));
         driveFilesList.appendChild(item);
     });

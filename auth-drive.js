@@ -227,6 +227,18 @@
         return response.json();
     }
 
+    async function deleteFlowchartFile(fileId) {
+        await requestDriveAccess();
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+        const response = await fetch(url, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!response.ok && response.status !== 204) {
+            throw new Error("Could not delete file (status " + response.status + ")");
+        }
+    }
+
     window.FlowAuthDrive = {
         init,
         getState,
@@ -235,6 +247,7 @@
         requestDriveAccess,
         listFlowchartFiles,
         fetchDriveFlowchart,
+        deleteFlowchartFile,
         setLocalGoogleClientId,
         clearLocalGoogleClientId
     };
