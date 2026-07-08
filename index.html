@@ -3,45 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlowCraft - Premium Flowchart & Infrastructure Designer</title>
-    <!-- Google Fonts: Outfit and Inter -->
+    <title>FlowCraft Login</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <!-- FontAwesome for Premium Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
-    
-    <!-- External libraries for exports and captures -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    
-    <!-- Google Identity Services client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
-<body>
-    <div class="app-container">
-        <!-- Sidebar: Library, Google Drive and Files -->
-        <aside class="sidebar" id="sidebar">
-            <div class="sidebar-header">
+<body class="login-page">
+    <div class="login-shell">
+        <section class="login-hero">
+            <div>
                 <div class="logo">
                     <i class="fa-solid fa-project-diagram brand-icon"></i>
                     <h1>FlowCraft</h1>
                 </div>
-                <button class="toggle-sidebar-btn" id="hide-sidebar" title="Hide Sidebar">
-                    <i class="fa-solid fa-chevron-left"></i>
+                <h2 class="login-title">Choose a flowchart or start a new one</h2>
+                <p class="login-subtitle">Sign in once, browse your saved Google Drive flowcharts, and open each editor session in its own tab.</p>
+            </div>
+            <div class="login-hero-actions">
+                <button class="btn btn-primary" id="btn-open-new-flowchart">
+                    <i class="fa-solid fa-plus"></i> New flowchart
                 </button>
             </div>
+        </section>
 
-            <div class="sidebar-content">
-                <!-- Google Drive Integration & Account Status -->
-                <div class="sidebar-section">
+        <section class="login-grid">
+            <div class="login-card">
+                <div class="sidebar-section login-card-section">
                     <h3>Google Integration</h3>
                     <div class="google-auth-container">
-                        <div id="google-sign-in-btn"></div>
                         <button class="btn btn-primary" id="btn-google-sign-in">
-                            <i class="fa-brands fa-google"></i> Logga in med Google
+                            <i class="fa-brands fa-google"></i> Log in with Google
                         </button>
                         <div class="user-profile-card" id="user-profile" style="display: none;">
                             <img src="" alt="Profile" id="user-avatar" class="user-avatar">
@@ -53,491 +47,58 @@
                                 <i class="fa-solid fa-right-from-bracket"></i>
                             </button>
                         </div>
-                        <div class="google-drive-actions" id="gdrive-actions" style="display: none;">
-                            <button class="btn btn-primary" id="btn-save-gdrive">
-                                <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
-                            </button>
-                            <button class="btn btn-outline" id="btn-open-gdrive">
-                                <i class="fa-solid fa-folder-open"></i> Open from Drive
-                            </button>
-                        </div>
                         <button class="btn btn-outline btn-sm" id="btn-configure-google">
                             <i class="fa-solid fa-gears"></i> OAuth Credentials
                         </button>
-                        <div class="help-text" style="margin-top: 8px;">
-                            Logga in med ett konto från <strong>hummel.se</strong>.
+                        <div class="help-text login-help-text">
+                            Sign in with a <strong>hummel.se</strong> account to view your saved Google Drive flowcharts.
                         </div>
-                    </div>
-                </div>
-
-                <!-- Shapes & Network Palette -->
-                <div class="sidebar-section">
-                    <h3>Flowchart Library</h3>
-                    <div class="shapes-palette">
-                        <!-- Standard Shapes -->
-                        <div class="palette-group">
-                            <h4>Standard Shapes</h4>
-                            <div class="palette-items">
-                                <div class="palette-item" data-shape="rectangle" title="Process (Rectangle)" draggable="true">
-                                    <div class="shape-icon rect-icon"></div>
-                                    <span>Process</span>
-                                </div>
-                                <div class="palette-item" data-shape="diamond" title="Decision (Diamond)" draggable="true">
-                                    <div class="shape-icon diamond-icon"></div>
-                                    <span>Decision</span>
-                                </div>
-                                <div class="palette-item" data-shape="terminator" title="Terminator (Rounded Rect)" draggable="true">
-                                    <div class="shape-icon rounded-rect-icon"></div>
-                                    <span>Terminator</span>
-                                </div>
-                                <div class="palette-item" data-shape="parallelogram" title="Data (Parallelogram)" draggable="true">
-                                    <div class="shape-icon parallelogram-icon"></div>
-                                    <span>Data (I/O)</span>
-                                </div>
-                                <div class="palette-item" data-shape="cylinder" title="Database (Cylinder)" draggable="true">
-                                    <div class="shape-icon cylinder-icon"></div>
-                                    <span>Database</span>
-                                </div>
-                                <div class="palette-item" data-shape="document" title="Document (Wavy bottom)" draggable="true">
-                                    <div class="shape-icon document-icon"></div>
-                                    <span>Document</span>
-                                </div>
-                                <div class="palette-item" data-shape="hexagon" title="Preparation (Hexagon)" draggable="true">
-                                    <div class="shape-icon hexagon-icon"></div>
-                                    <span>Preparation</span>
-                                </div>
-                                <div class="palette-item" data-shape="circle" title="Connector (Circle)" draggable="true">
-                                    <div class="shape-icon circle-icon"></div>
-                                    <span>Connector</span>
-                                </div>
-                                <div class="palette-item" data-shape="text-box" title="Text Box (No fill, no border)" draggable="true">
-                                    <div class="shape-icon" style="display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:var(--text-muted);">T</div>
-                                    <span>Textruta</span>
-                                </div>
-                                <div class="palette-item" data-shape="sticky-note" title="Sticky Note" draggable="true">
-                                    <div class="shape-icon" style="position:relative;border:1.5px solid #ca8a04;background:#fef08a;width:30px;height:20px;border-radius:2px;">
-                                        <div style="position:absolute;right:0;top:0;width:7px;height:7px;background:linear-gradient(135deg,#fde047 50%,#fef9c3 50%);border-left:1px solid #ca8a04;border-bottom:1px solid #ca8a04;"></div>
-                                    </div>
-                                    <span>Sticky Note</span>
-                                </div>
-                                <div class="palette-item" data-shape="cloud" title="Cloud" draggable="true">
-                                    <div class="shape-icon cloud-icon">
-                                        <svg viewBox="0 0 32 20" aria-hidden="true">
-                                            <path d="M 7 14 C 4 14, 3 12, 4 10 C 3 8, 5 6, 8 7 C 9 4, 12 3, 15 5 C 17 2, 22 2, 24 6 C 28 6, 30 9, 28 12 C 29 14, 26 16, 23 15 C 21 18, 10 18, 7 14 Z"></path>
-                                        </svg>
-                                    </div>
-                                    <span>Cloud</span>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-
-                <!-- Local Storage Map Manager -->
-                <div class="sidebar-section">
-                    <h3>Local Workspaces</h3>
-                    <div class="button-group-vertical">
-                        <button class="btn btn-outline" id="btn-new-flowchart">
-                            <i class="fa-solid fa-plus"></i> New Flowchart
-                        </button>
-                        <button class="btn btn-outline" id="btn-save-local">
-                            <i class="fa-solid fa-hdd"></i> Save Locally
-                        </button>
-                    </div>
-                    <div class="saved-maps-list" id="local-files-list">
-                        <div class="empty-state">No local saves.</div>
-                    </div>
-                </div>
-
-                <!-- Export Utilities -->
-                <div class="sidebar-section">
-                    <h3>Export Options</h3>
-                    <div class="button-group-vertical">
-                        <button class="btn btn-secondary" id="btn-export-word">
-                            <i class="fa-solid fa-file-word"></i> Download Word (.docx)
-                        </button>
-                        <button class="btn btn-secondary" id="btn-export-pdf">
-                            <i class="fa-solid fa-file-pdf"></i> Download PDF (.pdf)
-                        </button>
-                        <button class="btn btn-outline" id="btn-export-json">
-                            <i class="fa-solid fa-file-code"></i> Export JSON
-                        </button>
-                        <button class="btn btn-outline" id="btn-import-json">
-                            <i class="fa-solid fa-file-import"></i> Import JSON
-                        </button>
-                        <button class="btn btn-outline" id="btn-import-vsdx">
-                            <i class="fa-solid fa-diagram-project"></i> Import VSDX
-                        </button>
-                        <input type="file" id="file-import-input" accept=".json,.flowchart,.vsdx" style="display: none;">
                     </div>
                 </div>
             </div>
-            
-            <div class="sidebar-footer">
-                <div class="theme-info">
-                    <i class="fa-solid fa-circle-question"></i>
-                    <span>Drag node to move. Alt+drag text to reposition label. Double click or F2 to edit text.</span>
-                </div>
-            </div>
-        </aside>
 
-        <!-- Toggle Sidebar Button (shown when sidebar is hidden) -->
-        <button class="show-sidebar-btn" id="show-sidebar" title="Show Sidebar" style="display: none;">
-            <i class="fa-solid fa-bars"></i>
-        </button>
-
-        <!-- Main Workspace -->
-        <main class="workspace-container" id="workspace">
-            <!-- Topbar (Document Title & Tools) -->
-            <header class="topbar">
-                <div class="topbar-title-section">
-                    <span class="doc-title" id="doc-title" contenteditable="true">Untitled Flowchart</span>
-                    <span class="save-status" id="save-status">Saved locally</span>
-                    <span class="save-status" id="build-id">Commit local-dev</span>
-                </div>
-                <div class="topbar-actions">
-                    <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
-                    <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
-                    <div class="topbar-divider"></div>
-                    <button class="topbar-btn" id="btn-snap-grid" title="Toggle Snap to Grid"><i class="fa-solid fa-grid-3"></i></button>
-                    <button class="topbar-btn" id="btn-clear-canvas" title="Clear Canvas"><i class="fa-solid fa-trash-can"></i></button>
-                </div>
-            </header>
-
-            <!-- Infinite Canvas viewport -->
-            <div class="canvas" id="canvas">
-                <!-- SVG Canvas for Lines -->
-                <svg class="svg-connector-overlay" id="svg-overlay">
-                    <defs>
-                        <!-- Normal Arrow Marker -->
-                        <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
-                        </marker>
-                        <!-- Selected Arrow Marker -->
-                        <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
-                        </marker>
-                    </defs>
-                </svg>
-                
-                <!-- Container for HTML nodes -->
-                <div class="nodes-container" id="nodes-container"></div>
-
-                <!-- Drag-to-select marquee box -->
-                <div class="marquee-selection-box" id="marquee-selection-box" style="display: none;"></div>
-
-                <!-- Dedicated line endpoint handles layer -->
-                <div class="line-handles-layer" id="line-handles-layer"></div>
-
-                <!-- Dedicated node resize handles layer -->
-                <div class="node-handles-layer" id="node-handles-layer"></div>
-            </div>
-
-            <!-- Contextual Properties Panel (Floating Sidebar) -->
-            <div class="properties-panel" id="properties-panel" style="display: none;">
-                <div class="panel-header">
-                    <h4><i class="fa-solid fa-sliders"></i> Element Properties</h4>
-                    <button class="panel-close" id="close-properties">&times;</button>
-                </div>
-                <div class="panel-body">
-                    <!-- Dynamic fields depend on what is selected -->
-                    <div id="prop-node-section" style="display: none;">
-                        <div class="prop-group">
-                            <label>Text Content</label>
-                            <textarea id="prop-text" rows="2"></textarea>
-                        </div>
-                        <div class="prop-group row">
-                            <div>
-                                <label>Text Size (px)</label>
-                                <input type="number" id="prop-text-size" min="10" max="48" value="14">
-                            </div>
-                            <div>
-                                <label>URL Link</label>
-                                <input type="url" id="prop-url" placeholder="https://...">
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Text Position</label>
-                            <select id="prop-text-position">
-                                <option value="center">Center</option>
-                                <option value="top">Top</option>
-                                <option value="top-left">Top Left</option>
-                                <option value="top-right">Top Right</option>
-                                <option value="left">Left</option>
-                                <option value="right">Right</option>
-                                <option value="bottom">Bottom</option>
-                                <option value="bottom-left">Bottom Left</option>
-                                <option value="bottom-right">Bottom Right</option>
-                            </select>
-                        </div>
-                        <div class="prop-group row">
-                            <div>
-                                <label>Width (px)</label>
-                                <input type="number" id="prop-node-width" min="40" max="4000" value="120">
-                            </div>
-                            <div>
-                                <label>Height (px)</label>
-                                <input type="number" id="prop-node-height" min="30" max="4000" value="60">
-                            </div>
-                        </div>
-                        <div class="prop-group" id="prop-image-crop-group" style="display: none;">
-                            <label>Image Crop (%)</label>
-                            <div class="prop-group row" style="margin-top: 6px;">
-                                <div>
-                                    <label>Left</label>
-                                    <input type="number" id="prop-crop-left" min="0" max="90" step="1" value="0">
-                                </div>
-                                <div>
-                                    <label>Top</label>
-                                    <input type="number" id="prop-crop-top" min="0" max="90" step="1" value="0">
-                                </div>
-                            </div>
-                            <div class="prop-group row" style="margin-top: 6px;">
-                                <div>
-                                    <label>Right</label>
-                                    <input type="number" id="prop-crop-right" min="0" max="90" step="1" value="0">
-                                </div>
-                                <div>
-                                    <label>Bottom</label>
-                                    <input type="number" id="prop-crop-bottom" min="0" max="90" step="1" value="0">
-                                </div>
-                            </div>
-                            <div class="prop-group" style="margin-top: 8px;">
-                                <button class="btn btn-outline btn-full btn-sm" id="btn-reset-crop">
-                                    <i class="fa-solid fa-crop-simple"></i> Reset Crop
-                                </button>
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Background Color</label>
-                            <div class="color-picker-grid" id="prop-bgcolor-grid">
-                                <!-- Colors injected by JS -->
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Border Color</label>
-                            <div class="color-picker-grid" id="prop-bordercolor-grid">
-                                <!-- Colors injected by JS -->
-                            </div>
-                        </div>
-                        <div class="prop-group row">
-                            <div>
-                                <label>Border Width</label>
-                                <select id="prop-border-width">
-                                    <option value="1">1px (Thin)</option>
-                                    <option value="2">2px (Medium)</option>
-                                    <option value="4">4px (Thick)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label>Border Style</label>
-                                <select id="prop-border-style">
-                                    <option value="solid">Solid</option>
-                                    <option value="dashed">Dashed</option>
-                                    <option value="dotted">Dotted</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Layering (Z-Order)</label>
-                            <div class="button-group-row">
-                                <button class="btn btn-outline btn-full btn-sm" id="btn-bring-front" title="Bring to Front">
-                                    <i class="fa-solid fa-layer-group"></i> Bring Front
-                                </button>
-                                <button class="btn btn-outline btn-full btn-sm" id="btn-send-back" title="Send to Back">
-                                    <i class="fa-solid fa-layer-group fa-flip-vertical"></i> Send Back
-                                </button>
-                            </div>
-                        </div>
+            <div class="login-card login-drive-card">
+                <div class="login-card-header">
+                    <div>
+                        <h2>Saved in Google Drive</h2>
+                        <p>Select a flowchart to open it in a new editor tab.</p>
                     </div>
-                    
-                    <div id="prop-line-section" style="display: none;">
-                        <div class="prop-group">
-                            <label>Line Routing</label>
-                            <select id="prop-line-type">
-                                <option value="orthogonal">Orthogonal (Elbow)</option>
-                                <option value="straight">Straight</option>
-                                <option value="curved">Curved (Bezier)</option>
-                            </select>
-                        </div>
-                        <div class="prop-group">
-                            <label>Line Style</label>
-                            <select id="prop-line-style">
-                                <option value="solid">Solid</option>
-                                <option value="dashed">Dashed</option>
-                                <option value="dotted">Dotted</option>
-                            </select>
-                        </div>
-                        <div class="prop-group row">
-                            <div>
-                                <label>Thickness</label>
-                                <select id="prop-line-width">
-                                    <option value="1.5">1.5px (Thin)</option>
-                                    <option value="3">3px (Medium)</option>
-                                    <option value="5">5px (Thick)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label>Arrows</label>
-                                <select id="prop-line-arrows">
-                                    <option value="end">End Arrow</option>
-                                    <option value="none">No Arrows</option>
-                                    <option value="start">Start Arrow</option>
-                                    <option value="both">Both Arrows</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Line Color</label>
-                            <div class="color-picker-grid" id="prop-linecolor-grid">
-                                <!-- Colors injected by JS -->
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <label>Layering (Z-Order)</label>
-                            <div class="button-group-row">
-                                <button class="btn btn-outline btn-full btn-sm" id="btn-line-bring-front" title="Bring Line to Front">
-                                    <i class="fa-solid fa-layer-group"></i> Bring Front
-                                </button>
-                                <button class="btn btn-outline btn-full btn-sm" id="btn-line-send-back" title="Send Line to Back">
-                                    <i class="fa-solid fa-layer-group fa-flip-vertical"></i> Send Back
-                                </button>
-                            </div>
-                        </div>
-                        <div class="prop-group">
-                            <button class="btn btn-outline btn-full btn-sm" id="btn-set-default-line">
-                                <i class="fa-solid fa-sliders"></i> Set as Default Line
-                            </button>
-                        </div>
-                        <div class="prop-group">
-                            <button class="btn btn-outline btn-full btn-sm" id="btn-reset-default-line">
-                                <i class="fa-solid fa-rotate-left"></i> Reset Default Line
-                            </button>
-                        </div>
-                    </div>
-
-                    <button class="btn btn-danger btn-full" id="btn-delete-selected">
-                        <i class="fa-solid fa-trash-can"></i> Delete Element
+                    <button class="btn btn-outline btn-sm" id="btn-refresh-drive" disabled>
+                        <i class="fa-solid fa-rotate"></i> Refresh
                     </button>
                 </div>
-            </div>
-
-            <!-- Floating Zoom / View Controls -->
-            <div class="floating-controls">
-                <button class="control-btn" id="ctrl-zoom-out" title="Zoom Out (Scroll Down)"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
-                <span class="zoom-indicator" id="zoom-indicator">100%</span>
-                <button class="control-btn" id="ctrl-zoom-in" title="Zoom In (Scroll Up)"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
-                <div class="divider"></div>
-                <button class="control-btn" id="ctrl-reset-view" title="Recenter View (Space)"><i class="fa-solid fa-crosshairs"></i></button>
-                <button class="control-btn" id="ctrl-help" title="Keyboard Help"><i class="fa-solid fa-keyboard"></i></button>
-            </div>
-        </main>
-
-        <!-- Google Configuration Modal -->
-        <div class="modal-overlay" id="google-config-modal">
-            <div class="modal">
-                <div class="modal-header">
-                    <h2><i class="fa-solid fa-gears"></i> OAuth Configuration</h2>
-                    <button class="modal-close" id="close-config-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <p class="modal-instruction">Google Drive uses shared app-config.js first. This modal is for optional local override only when allowLocalClientIdOverride is enabled.</p>
-                    <div class="form-group">
-                        <label for="google-client-id">Google Client ID</label>
-                        <input type="text" id="google-client-id" placeholder="123456789-abc123XYZ.apps.googleusercontent.com" class="form-control">
-                    </div>
-                    <div class="help-text">
-                        <p>Need a client ID? Setup a web application client credential in your <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> with Authorized Redirect Origin <code>http://localhost:3000</code> or your actual host domain.</p>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-outline" id="btn-clear-config">Clear</button>
-                    <button class="btn btn-primary" id="btn-save-config">Save Credentials</button>
+                <div class="gdrive-files-container login-drive-list" id="drive-files-list">
+                    <div class="empty-state">Sign in to load your saved flowcharts.</div>
                 </div>
             </div>
-        </div>
+        </section>
+    </div>
 
-        <!-- Google Drive File Browser Modal -->
-        <div class="modal-overlay" id="gdrive-explorer-modal">
-            <div class="modal">
-                <div class="modal-header">
-                    <h2><i class="fa-solid fa-cloud"></i> Google Drive Explorer</h2>
-                    <button class="modal-close" id="close-gdrive-modal">&times;</button>
+    <div class="modal-overlay" id="google-config-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2><i class="fa-solid fa-gears"></i> OAuth Configuration</h2>
+                <button class="modal-close" id="close-config-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-instruction">Google Drive uses shared app-config.js first. This modal is for optional local override only when allowLocalClientIdOverride is enabled.</p>
+                <div class="form-group">
+                    <label for="google-client-id">Google Client ID</label>
+                    <input type="text" id="google-client-id" placeholder="123456789-abc123XYZ.apps.googleusercontent.com" class="form-control">
                 </div>
-                <div class="modal-body">
-                    <p class="modal-instruction">Select a flowchart document to open, or use the trash icon to move it to Google Drive wastebasket:</p>
-                    <div class="gdrive-files-container" id="gdrive-files-container">
-                        <!-- Drive files injected dynamically by JS -->
-                        <div class="empty-state">Loading files...</div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-outline" id="btn-close-gdrive-explorer">Cancel</button>
+                <div class="help-text">
+                    <p>Need a client ID? Setup a web application client credential in your <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> with Authorized Redirect Origin <code>http://localhost:3000</code> or your actual host domain.</p>
                 </div>
             </div>
-        </div>
-
-        <!-- Keyboard Help Modal -->
-        <div class="modal-overlay" id="help-modal">
-            <div class="modal">
-                <div class="modal-header">
-                    <h2><i class="fa-solid fa-keyboard"></i> Keyboard Shortcuts</h2>
-                    <button class="modal-close" id="close-help-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="shortcuts-grid">
-                        <div class="shortcut-item">
-                            <span class="key">Double Click</span>
-                            <span class="action">Edit shape text</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">F2</span>
-                            <span class="action">Edit selected shape text</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Ctrl + V</span>
-                            <span class="action">Paste screenshot/image from clipboard</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Delete</span> / <span class="key">Backspace</span>
-                            <span class="action">Delete selected element (shape or line)</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Ctrl + Z</span> / <span class="key">Ctrl + Y</span>
-                            <span class="action">Undo / Redo changes</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Arrow Keys</span> / <span class="key">Shift + Arrow</span>
-                            <span class="action">Nudge selected shape(s) by 1px / 10px</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Space</span>
-                            <span class="action">Reset pan and zoom to center</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Scroll Wheel</span>
-                            <span class="action">Zoom in / out of canvas</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Drag Background</span>
-                            <span class="action">Pan the flowchart viewport</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <span class="key">Drag Selected Line</span>
-                            <span class="action">Reroute straight, curved, or orthogonal line around shapes</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-primary" id="btn-close-help">Got it</button>
-                </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" id="btn-clear-config">Clear</button>
+                <button class="btn btn-primary" id="btn-save-config">Save Credentials</button>
             </div>
         </div>
     </div>
 
     <script src="app-config.js"></script>
-    <!-- Core App JS -->
-    <script src="app.js?v=20260703-build-meta-1"></script>
+    <script src="auth-drive.js?v=20260708-login-shell-1"></script>
+    <script src="login.js?v=20260708-login-shell-1"></script>
 </body>
 </html>

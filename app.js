@@ -1,6 +1,7 @@
 // FlowCraft - Core Flowchart & Infrastructure Engine
 const APP_BUILD = "local-dev";
 const BUILD_INFO_PATH = "build-info.json";
+const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
 
 // --- Application State ---
 let nodes = {};
@@ -328,6 +329,69 @@ async function updateBuildBadge() {
     console.info("FlowCraft build:", APP_BUILD);
 }
 
+function consumeEditorBootPayload() {
+    const params = new URLSearchParams(window.location.search);
+    const bootKey = params.get("bootKey");
+    if (!bootKey) return null;
+
+    const storageKey = FLOWCRAFT_EDITOR_BOOT_PREFIX + bootKey;
+    const raw = localStorage.getItem(storageKey);
+    localStorage.removeItem(storageKey);
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("bootKey");
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+
+    if (!raw) return null;
+
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed && parsed.payload ? parsed.payload : null;
+    } catch (err) {
+        return null;
+    }
+}
+
+function bootEditorFromNavigationState() {
+    const params = new URLSearchParams(window.location.search);
+    const bootPayload = consumeEditorBootPayload();
+
+    if (bootPayload && bootPayload.type === "drive-file") {
+        const normalized = normalizeImportedData(bootPayload.content);
+        if (normalized) {
+            currentDriveFileId = bootPayload.fileId || null;
+            currentLocalSaveName = "";
+            loadSessionData(normalized.data);
+            return true;
+        }
+        alert("Could not open the selected Drive flowchart. Starting a new flowchart instead.");
+    }
+
+    if (params.get("mode") === "new") {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("mode");
+        window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+        currentDriveFileId = null;
+        currentLocalSaveName = "";
+        createStartingTemplate();
+        return true;
+    }
+
+    const lastSession = localStorage.getItem("flowcraft_autosave");
+    if (lastSession) {
+        try {
+            loadSessionData(JSON.parse(lastSession));
+            return true;
+        } catch (e) {
+            createStartingTemplate();
+            return true;
+        }
+    }
+
+    createStartingTemplate();
+    return true;
+}
+
 function init() {
     updateBuildBadge();
     updateGoogleConfigUiState();
@@ -340,17 +404,8 @@ function init() {
     // Set snap grid button state
     updateSnapGridButtonState();
     
-    // Auto load last saved map or create a starting node
-    const lastSession = localStorage.getItem("flowcraft_autosave");
-    if (lastSession) {
-        try {
-            loadSessionData(JSON.parse(lastSession));
-        } catch (e) {
-            createStartingTemplate();
-        }
-    } else {
-        createStartingTemplate();
-    }
+    // Boot either a login-shell handoff, a new blank editor, or the previous local session.
+    bootEditorFromNavigationState();
     
     // Google GIS Auto login check
     if (googleClientId && isTrustedRuntimeOrigin()) {
