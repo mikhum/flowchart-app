@@ -76,6 +76,7 @@ const configuredAllowedOrigins = Array.isArray(window.FLOWCRAFT_CONFIG?.allowedO
         .filter(Boolean)
     : [];
 const allowLocalClientIdOverride = !!window.FLOWCRAFT_CONFIG?.allowLocalClientIdOverride;
+const startupDebugEnabled = !!window.FLOWCRAFT_CONFIG?.debugStartupMode;
 
 function getStoredLocalGoogleClientId() {
     return String(localStorage.getItem("flowcraft_google_client_id") || "").trim();
@@ -94,6 +95,21 @@ let accessToken = "";
 let userProfile = null;
 let tokenClient = null;
 const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
+
+function logStartup(message) {
+    if (!startupDebugEnabled) return;
+    console.info("[FlowCraft startup]", message);
+}
+
+function showStartupDebugStatus(pathLabel) {
+    if (!startupDebugEnabled || !saveStatus) return;
+    const message = `Startup debug: ${pathLabel}`;
+    if (saveStatus.textContent && saveStatus.textContent.trim()) {
+        saveStatus.textContent = `${saveStatus.textContent} | ${message}`;
+        return;
+    }
+    saveStatus.textContent = message;
+}
 
 function isValidGoogleClientId(clientId) {
     return /^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(String(clientId || "").trim());
@@ -379,6 +395,17 @@ function consumeEditorBootPayload() {
     }
 }
 
+function consumeEditorMode() {
+    const url = new URL(window.location.href);
+    const mode = (url.searchParams.get("mode") || "").trim().toLowerCase();
+    if (!mode) return "";
+
+    // Consume mode once so browser refresh does not re-trigger startup mode logic.
+    url.searchParams.delete("mode");
+    window.history.replaceState({}, document.title, url.toString());
+    return mode;
+}
+
 function init() {
     updateBuildBadge();
     updateGoogleConfigUiState();
@@ -392,19 +419,44 @@ function init() {
     // Set snap grid button state
     updateSnapGridButtonState();
 
-    // If opened from login with a boot payload, use that; otherwise restore autosave
-    if (!consumeEditorBootPayload()) {
+    // Honor explicit startup mode from login page.
+    const startupMode = consumeEditorMode();
+
+    let startupPathLabel = "template-default";
+
+    // If opened with mode=new, always start clean and skip autosave restore.
+    if (startupMode === "new") {
+        logStartup("mode=new detected; creating clean template and skipping autosave restore");
+        createStartingTemplate();
+        currentLocalSaveName = "";
+        currentDriveFileId = null;
+        startupPathLabel = "mode=new";
+        // Persist clean startup immediately so a browser refresh cannot revive stale autosave data.
+        saveAutosave();
+    } else if (!consumeEditorBootPayload()) {
+        // If opened from login with a boot payload, use that; otherwise restore autosave.
         const lastSession = localStorage.getItem("flowcraft_autosave");
         if (lastSession) {
             try {
+                logStartup("restoring from autosave");
                 loadSessionData(JSON.parse(lastSession));
+                startupPathLabel = "autosave";
             } catch (e) {
+                logStartup("autosave parse failed; creating clean template");
                 createStartingTemplate();
+                startupPathLabel = "autosave-invalid-template";
             }
         } else {
+            logStartup("no autosave found; creating clean template");
             createStartingTemplate();
+            startupPathLabel = "no-autosave-template";
         }
+    } else {
+        logStartup("boot payload consumed from login handoff");
+        startupPathLabel = "boot-payload";
     }
+
+    showStartupDebugStatus(startupPathLabel);
 
     // Apply hydrated Drive session to UI
     if (userProfile) {
@@ -2762,6 +2814,12 @@ function redo() {
 }
 
 function loadSessionData(data) {
+    resetTransientInteractions();
+    selectedId = null;
+    selectedType = null;
+    selectedNodeIds.clear();
+    copiedElement = null;
+
     nodes = data.nodes || {};
     lines = data.lines || [];
     currentDocName = data.name || "Untitled Flowchart";
