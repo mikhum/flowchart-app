@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlowCraft - Premium Flowchart & Infrastructure Designer</title>
+    <title>FlowCraft Editor</title>
     <!-- Google Fonts: Outfit and Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,13 +14,15 @@
     
     <!-- External libraries for exports and captures -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/docx@8.2.4/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     
     <!-- Google Identity Services client -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
     <div class="app-container">
-        <!-- Sidebar: Library, local workspaces, and exports -->
+        <!-- Sidebar: Library, Google Drive and Files -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
@@ -33,10 +35,43 @@
             </div>
 
             <div class="sidebar-content">
+                <!-- Google Drive Integration & Account Status -->
+                <div class="sidebar-section">
+                    <h3>Google Integration</h3>
+                    <div class="google-auth-container">
+                        <div id="google-sign-in-btn"></div>
+                        <button class="btn btn-primary" id="btn-google-sign-in">
+                            <i class="fa-brands fa-google"></i> Logga in med Google
+                        </button>
+                        <div class="user-profile-card" id="user-profile" style="display: none;">
+                            <img src="" alt="Profile" id="user-avatar" class="user-avatar">
+                            <div class="user-info">
+                                <div class="user-name" id="user-name">Not Signed In</div>
+                                <div class="user-email" id="user-email">domain restricted</div>
+                            </div>
+                            <button class="btn-icon-danger" id="google-sign-out" title="Sign Out">
+                                <i class="fa-solid fa-right-from-bracket"></i>
+                            </button>
+                        </div>
+                        <div class="google-drive-sidebar-actions" id="gdrive-open-actions" style="display: none;">
+                            <button class="btn btn-outline" id="btn-open-gdrive">
+                                <i class="fa-solid fa-folder-open"></i> Open from Drive
+                            </button>
+                        </div>
+                        <button class="btn btn-outline btn-sm" id="btn-configure-google">
+                            <i class="fa-solid fa-gears"></i> OAuth Credentials
+                        </button>
+                        <div class="help-text" style="margin-top: 8px;">
+                            Logga in med ett konto frÃ¥n <strong>hummel.se</strong>.
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Shapes & Network Palette -->
                 <div class="sidebar-section">
                     <h3>Flowchart Library</h3>
                     <div class="shapes-palette">
+                        <!-- Standard Shapes -->
                         <div class="palette-group">
                             <h4>Standard Shapes</h4>
                             <div class="palette-items">
@@ -104,9 +139,6 @@
                             <i class="fa-solid fa-plus"></i> New Flowchart
                         </button>
                     </div>
-                    <div class="help-text">
-                        Use the header bar to save the current flowchart locally. Saved local workspaces stay listed here.
-                    </div>
                     <div class="saved-maps-list" id="local-files-list">
                         <div class="empty-state">No local saves.</div>
                     </div>
@@ -116,12 +148,22 @@
                 <div class="sidebar-section">
                     <h3>Export Options</h3>
                     <div class="button-group-vertical">
+                        <button class="btn btn-secondary" id="btn-export-word">
+                            <i class="fa-solid fa-file-word"></i> Download Word (.docx)
+                        </button>
                         <button class="btn btn-secondary" id="btn-export-pdf">
                             <i class="fa-solid fa-file-pdf"></i> Download PDF (.pdf)
                         </button>
                         <button class="btn btn-outline" id="btn-export-json">
                             <i class="fa-solid fa-file-code"></i> Export JSON
                         </button>
+                        <button class="btn btn-outline" id="btn-import-json">
+                            <i class="fa-solid fa-file-import"></i> Import JSON
+                        </button>
+                        <button class="btn btn-outline" id="btn-import-vsdx">
+                            <i class="fa-solid fa-diagram-project"></i> Import VSDX
+                        </button>
+                        <input type="file" id="file-import-input" accept=".json,.flowchart,.vsdx" style="display: none;">
                     </div>
                 </div>
             </div>
@@ -134,31 +176,29 @@
             </div>
         </aside>
 
+        <!-- Toggle Sidebar Button (shown when sidebar is hidden) -->
         <button class="show-sidebar-btn" id="show-sidebar" title="Show Sidebar" style="display: none;">
             <i class="fa-solid fa-bars"></i>
         </button>
 
+        <!-- Main Workspace -->
         <main class="workspace-container" id="workspace">
+            <!-- Topbar (Document Title & Tools) -->
             <header class="topbar">
                 <div class="topbar-title-section">
                     <span class="doc-title" id="doc-title" contenteditable="true">Untitled Flowchart</span>
                     <span class="save-status" id="save-status">Saved locally</span>
-                    <span class="save-status drive-connection-status" id="drive-connection-status">Local save ready</span>
                     <span class="save-status" id="build-id">Commit local-dev</span>
                 </div>
                 <div class="topbar-actions">
-                    <button class="btn btn-primary topbar-action-btn" id="btn-topbar-save-local" title="Save this flowchart locally">
-                        <i class="fa-solid fa-hdd"></i>
-                        <span>Save Local</span>
+                    <button class="btn btn-primary topbar-action-btn" id="btn-save-local" title="Save this flowchart locally">
+                        <i class="fa-solid fa-hdd"></i> Save Locally
                     </button>
-                    <button class="btn btn-outline topbar-action-btn" id="btn-topbar-save-gdrive" title="Save this flowchart to Google Drive">
-                        <i class="fa-solid fa-cloud-arrow-up"></i>
-                        <span>Save Drive</span>
-                    </button>
-                    <button class="btn btn-outline topbar-action-btn" id="btn-topbar-google-sign-in" title="Connect Google Drive">
-                        <i class="fa-brands fa-google"></i>
-                        <span>Connect Drive</span>
-                    </button>
+                    <div class="google-drive-actions topbar-action-drive" id="gdrive-actions" style="display: none;">
+                        <button class="btn btn-outline topbar-action-btn" id="btn-save-gdrive" title="Save to Google Drive">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Save to Drive
+                        </button>
+                    </div>
                     <div class="topbar-divider"></div>
                     <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
@@ -168,29 +208,43 @@
                 </div>
             </header>
 
+            <!-- Infinite Canvas viewport -->
             <div class="canvas" id="canvas">
+                <!-- SVG Canvas for Lines -->
                 <svg class="svg-connector-overlay" id="svg-overlay">
                     <defs>
+                        <!-- Normal Arrow Marker -->
                         <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                             <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
                         </marker>
+                        <!-- Selected Arrow Marker -->
                         <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                             <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
                         </marker>
                     </defs>
                 </svg>
+                
+                <!-- Container for HTML nodes -->
                 <div class="nodes-container" id="nodes-container"></div>
+
+                <!-- Drag-to-select marquee box -->
                 <div class="marquee-selection-box" id="marquee-selection-box" style="display: none;"></div>
+
+                <!-- Dedicated line endpoint handles layer -->
                 <div class="line-handles-layer" id="line-handles-layer"></div>
+
+                <!-- Dedicated node resize handles layer -->
                 <div class="node-handles-layer" id="node-handles-layer"></div>
             </div>
 
+            <!-- Contextual Properties Panel (Floating Sidebar) -->
             <div class="properties-panel" id="properties-panel" style="display: none;">
                 <div class="panel-header">
                     <h4><i class="fa-solid fa-sliders"></i> Element Properties</h4>
                     <button class="panel-close" id="close-properties">&times;</button>
                 </div>
                 <div class="panel-body">
+                    <!-- Dynamic fields depend on what is selected -->
                     <div id="prop-node-section" style="display: none;">
                         <div class="prop-group">
                             <label>Text Content</label>
@@ -260,11 +314,15 @@
                         </div>
                         <div class="prop-group">
                             <label>Background Color</label>
-                            <div class="color-picker-grid" id="prop-bgcolor-grid"></div>
+                            <div class="color-picker-grid" id="prop-bgcolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
                         </div>
                         <div class="prop-group">
                             <label>Border Color</label>
-                            <div class="color-picker-grid" id="prop-bordercolor-grid"></div>
+                            <div class="color-picker-grid" id="prop-bordercolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
                         </div>
                         <div class="prop-group row">
                             <div>
@@ -335,7 +393,9 @@
                         </div>
                         <div class="prop-group">
                             <label>Line Color</label>
-                            <div class="color-picker-grid" id="prop-linecolor-grid"></div>
+                            <div class="color-picker-grid" id="prop-linecolor-grid">
+                                <!-- Colors injected by JS -->
+                            </div>
                         </div>
                         <div class="prop-group">
                             <label>Layering (Z-Order)</label>
@@ -366,6 +426,7 @@
                 </div>
             </div>
 
+            <!-- Floating Zoom / View Controls -->
             <div class="floating-controls">
                 <button class="control-btn" id="ctrl-zoom-out" title="Zoom Out (Scroll Down)"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
                 <span class="zoom-indicator" id="zoom-indicator">100%</span>
@@ -376,6 +437,7 @@
             </div>
         </main>
 
+        <!-- Google Configuration Modal -->
         <div class="modal-overlay" id="google-config-modal">
             <div class="modal">
                 <div class="modal-header">
@@ -399,6 +461,7 @@
             </div>
         </div>
 
+        <!-- Google Drive File Browser Modal -->
         <div class="modal-overlay" id="gdrive-explorer-modal">
             <div class="modal">
                 <div class="modal-header">
@@ -408,6 +471,7 @@
                 <div class="modal-body">
                     <p class="modal-instruction">Select a flowchart document to open, or use the trash icon to move it to Google Drive wastebasket:</p>
                     <div class="gdrive-files-container" id="gdrive-files-container">
+                        <!-- Drive files injected dynamically by JS -->
                         <div class="empty-state">Loading files...</div>
                     </div>
                 </div>
@@ -417,6 +481,7 @@
             </div>
         </div>
 
+        <!-- Keyboard Help Modal -->
         <div class="modal-overlay" id="help-modal">
             <div class="modal">
                 <div class="modal-header">
@@ -475,6 +540,8 @@
     </div>
 
     <script src="app-config.js"></script>
-    <script src="app.js?v=20260708-editor-shell-3"></script>
+    <!-- Core App JS -->
+    <script src="app.js?v=20260708-editor-1"></script>
 </body>
 </html>
+

@@ -1,109 +1,102 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlowCraft Login</title>
+    <title>FlowCraft - Start</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body class="login-page">
-    <div class="login-shell">
-        <section class="login-hero">
-            <div>
-                <div class="logo">
-                    <i class="fa-solid fa-project-diagram brand-icon"></i>
-                    <h1>FlowCraft</h1>
-                </div>
-                <h2 class="login-title">Choose a flowchart or start a new one</h2>
-                <p class="login-subtitle">Sign in once, browse your saved Google Drive flowcharts, and open each editor session in its own tab.</p>
+
+<div class="login-shell">
+
+    <section class="login-hero">
+        <div class="login-brand">
+            <i class="fa-solid fa-project-diagram brand-icon"></i>
+            <span class="login-brand-name">FlowCraft</span>
+        </div>
+        <h1 class="login-title">Your flowcharts,<br>one click away</h1>
+        <p class="login-subtitle">Sign in with Google to browse your saved flowcharts, or start a new one right away.</p>
+        <div class="login-hero-actions">
+            <button class="btn btn-primary btn-lg" id="btn-new-flowchart">
+                <i class="fa-solid fa-plus"></i> New flowchart
+            </button>
+            <button class="btn btn-outline btn-lg" id="btn-import-json">
+                <i class="fa-solid fa-file-import"></i> Import JSON
+            </button>
+            <input type="file" id="file-import-input" accept=".json,.flowchart" style="display:none;">
+        </div>
+    </section>
+
+    <section class="login-content">
+
+        <div class="login-card">
+            <div class="login-card-header">
+                <h2><i class="fa-brands fa-google"></i> Google Drive</h2>
             </div>
-            <div class="login-hero-actions">
-                <button class="btn btn-outline" id="btn-import-json">
-                    <i class="fa-solid fa-file-import"></i> Import JSON
+            <div id="auth-body">
+                <p class="login-help">Sign in with a <strong>hummel.se</strong> account to view your saved flowcharts.</p>
+                <button class="btn btn-primary btn-full" id="btn-google-sign-in">
+                    <i class="fa-brands fa-google"></i> Sign in with Google
                 </button>
-                <button class="btn btn-primary" id="btn-open-new-flowchart">
-                    <i class="fa-solid fa-plus"></i> New flowchart
+                <button class="btn btn-outline btn-sm" id="btn-configure-google" style="margin-top:8px;">
+                    <i class="fa-solid fa-gears"></i> OAuth Credentials
                 </button>
             </div>
-        </section>
-
-        <section class="login-grid">
-            <div class="login-card">
-                <div class="sidebar-section login-card-section">
-                    <h3>Google Integration</h3>
-                    <div class="google-auth-container">
-                        <button class="btn btn-primary" id="btn-google-sign-in">
-                            <i class="fa-brands fa-google"></i> Log in with Google
-                        </button>
-                        <div class="user-profile-card" id="user-profile" style="display: none;">
-                            <img src="" alt="Profile" id="user-avatar" class="user-avatar">
-                            <div class="user-info">
-                                <div class="user-name" id="user-name">Not Signed In</div>
-                                <div class="user-email" id="user-email">domain restricted</div>
-                            </div>
-                            <button class="btn-icon-danger" id="google-sign-out" title="Sign Out">
-                                <i class="fa-solid fa-right-from-bracket"></i>
-                            </button>
-                        </div>
-                        <button class="btn btn-outline btn-sm" id="btn-configure-google">
-                            <i class="fa-solid fa-gears"></i> OAuth Credentials
-                        </button>
-                        <div class="help-text login-help-text">
-                            Sign in with a <strong>hummel.se</strong> account to view your saved Google Drive flowcharts.
-                        </div>
-                    </div>
+            <div class="login-profile-row" id="profile-row" style="display:none;">
+                <img src="" alt="" id="user-avatar" class="user-avatar">
+                <div class="user-info">
+                    <div class="user-name" id="user-name"></div>
+                    <div class="user-email" id="user-email"></div>
                 </div>
-            </div>
-
-            <div class="login-card login-drive-card">
-                <div class="login-card-header">
-                    <div>
-                        <h2>Saved in Google Drive</h2>
-                        <p>Select a flowchart to open it in a new editor tab.</p>
-                    </div>
-                    <button class="btn btn-outline btn-sm" id="btn-refresh-drive" disabled>
-                        <i class="fa-solid fa-rotate"></i> Refresh
-                    </button>
-                </div>
-                <div class="gdrive-files-container login-drive-list" id="drive-files-list">
-                    <div class="empty-state">Sign in to load your saved flowcharts.</div>
-                </div>
-            </div>
-        </section>
-    </div>
-
-    <input type="file" id="file-import-input" accept=".json,.flowchart" style="display: none;">
-
-    <div class="modal-overlay" id="google-config-modal">
-        <div class="modal">
-            <div class="modal-header">
-                <h2><i class="fa-solid fa-gears"></i> OAuth Configuration</h2>
-                <button class="modal-close" id="close-config-modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p class="modal-instruction">Google Drive uses shared app-config.js first. This modal is for optional local override only when allowLocalClientIdOverride is enabled.</p>
-                <div class="form-group">
-                    <label for="google-client-id">Google Client ID</label>
-                    <input type="text" id="google-client-id" placeholder="123456789-abc123XYZ.apps.googleusercontent.com" class="form-control">
-                </div>
-                <div class="help-text">
-                    <p>Need a client ID? Setup a web application client credential in your <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> with Authorized Redirect Origin <code>http://localhost:3000</code> or your actual host domain.</p>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-outline" id="btn-clear-config">Clear</button>
-                <button class="btn btn-primary" id="btn-save-config">Save Credentials</button>
+                <button class="btn-icon-danger" id="btn-sign-out" title="Sign out">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </button>
             </div>
         </div>
-    </div>
 
-    <script src="app-config.js"></script>
-    <script src="auth-drive.js?v=20260708-login-shell-1"></script>
-    <script src="login.js?v=20260708-login-shell-2"></script>
+        <div class="login-card login-files-card">
+            <div class="login-card-header">
+                <h2><i class="fa-solid fa-cloud"></i> Saved in Google Drive</h2>
+                <button class="btn btn-outline btn-sm" id="btn-refresh-drive" disabled>
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                </button>
+            </div>
+            <div class="drive-files-list" id="drive-files-list">
+                <div class="empty-state">Sign in to load your flowcharts.</div>
+            </div>
+        </div>
+
+    </section>
+</div>
+
+<div class="modal-overlay" id="google-config-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2><i class="fa-solid fa-gears"></i> OAuth Configuration</h2>
+            <button class="modal-close" id="close-config-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="modal-instruction">Google Drive uses shared app-config.js. This override is only effective when allowLocalClientIdOverride is enabled.</p>
+            <div class="form-group">
+                <label for="google-client-id">Google Client ID</label>
+                <input type="text" id="google-client-id" placeholder="123456789-abc.apps.googleusercontent.com" class="form-control">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" id="btn-clear-config">Clear</button>
+            <button class="btn btn-primary" id="btn-save-config">Save</button>
+        </div>
+    </div>
+</div>
+
+<script src="app-config.js"></script>
+<script src="auth-drive.js?v=20260708-1"></script>
+<script src="login.js?v=20260708-1"></script>
 </body>
 </html>

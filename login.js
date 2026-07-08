@@ -1,69 +1,45 @@
+﻿// FlowCraft Login Page Logic
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
-const FLOWCRAFT_EDITOR_BOOT_TTL_MS = 1000 * 60 * 30;
 const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
 const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 50;
 
-const btnGoogleSignIn = document.getElementById("btn-google-sign-in");
-const btnGoogleSignOut = document.getElementById("google-sign-out");
+// --- DOM refs ---
+const btnNewFlowchart    = document.getElementById("btn-new-flowchart");
+const btnImportJson      = document.getElementById("btn-import-json");
+const fileImportInput    = document.getElementById("file-import-input");
+const btnGoogleSignIn    = document.getElementById("btn-google-sign-in");
+const btnSignOut         = document.getElementById("btn-sign-out");
 const btnConfigureGoogle = document.getElementById("btn-configure-google");
-const btnImportJson = document.getElementById("btn-import-json");
-const btnOpenNewFlowchart = document.getElementById("btn-open-new-flowchart");
-const btnRefreshDrive = document.getElementById("btn-refresh-drive");
-const fileImportInput = document.getElementById("file-import-input");
-const userProfileCard = document.getElementById("user-profile");
-const userAvatar = document.getElementById("user-avatar");
-const userName = document.getElementById("user-name");
-const userEmail = document.getElementById("user-email");
-const driveFilesList = document.getElementById("drive-files-list");
+const btnRefreshDrive    = document.getElementById("btn-refresh-drive");
+const profileRow         = document.getElementById("profile-row");
+const authBody           = document.getElementById("auth-body");
+const driveFilesList     = document.getElementById("drive-files-list");
+const configModal        = document.getElementById("google-config-modal");
+const btnCloseConfig     = document.getElementById("close-config-modal");
+const inputClientId      = document.getElementById("google-client-id");
+const btnSaveConfig      = document.getElementById("btn-save-config");
+const btnClearConfig     = document.getElementById("btn-clear-config");
 
-const googleConfigModal = document.getElementById("google-config-modal");
-const closeConfigModal = document.getElementById("close-config-modal");
-const inputClientId = document.getElementById("google-client-id");
-const btnSaveConfig = document.getElementById("btn-save-config");
-const btnClearConfig = document.getElementById("btn-clear-config");
-
-let latestAuthState = null;
-let lastListedEmail = "";
-
-function showGoogleConfigModal(show) {
-    googleConfigModal.classList.toggle("active", show);
+// --- Helpers ---
+function buildEditorUrl(extra = {}) {
+    const url = new URL("editor.html", window.location.href);
+    for (const [k, v] of Object.entries(extra)) {
+        if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
+    }
+    return url.toString();
 }
 
-function setDriveListEmpty(message) {
-    driveFilesList.innerHTML = `<div class="empty-state">${message}</div>`;
-}
-
-function cleanupStaleBootPayloads() {
-    const now = Date.now();
-    Object.keys(localStorage).forEach((key) => {
-        if (!key.startsWith(FLOWCRAFT_EDITOR_BOOT_PREFIX)) return;
-        try {
-            const parsed = JSON.parse(localStorage.getItem(key) || "null");
-            if (!parsed || !parsed.createdAt || now - Number(parsed.createdAt) > FLOWCRAFT_EDITOR_BOOT_TTL_MS) {
-                localStorage.removeItem(key);
-            }
-        } catch (error) {
-            localStorage.removeItem(key);
-        }
-    });
-}
-
-function persistEditorBootPayload(payload) {
-    cleanupStaleBootPayloads();
+function persistBootPayload(payload) {
     const key = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem(FLOWCRAFT_EDITOR_BOOT_PREFIX + key, JSON.stringify({
-        createdAt: Date.now(),
-        payload
-    }));
+    localStorage.setItem(FLOWCRAFT_EDITOR_BOOT_PREFIX + key, JSON.stringify(payload));
     return key;
 }
 
-function persistDriveSessionFromState(state) {
-    if (!state || !state.driveReady || !state.userProfile) {
+function persistDriveSession(state) {
+    if (!state.driveReady || !state.userProfile) {
         localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
         return;
     }
-
     localStorage.setItem(FLOWCRAFT_DRIVE_SESSION_KEY, JSON.stringify({
         createdAt: Date.now(),
         accessToken: state.accessToken,
@@ -71,226 +47,166 @@ function persistDriveSessionFromState(state) {
     }));
 }
 
-function clearPersistedDriveSession() {
-    localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
+function openEditorTab(url) {
+    const tab = window.open(url, "_blank");
+    if (!tab) alert("Please allow pop-ups for this site to open the editor in a new tab.");
+    return tab;
 }
 
-function cleanupStaleDriveSession() {
-    try {
-        const raw = localStorage.getItem(FLOWCRAFT_DRIVE_SESSION_KEY);
-        if (!raw) return;
+// --- Drive file list ---
+function setFilesLoading(msg) {
+    driveFilesList.innerHTML = `<div class="empty-state">${msg}</div>`;
+}
 
-        const parsed = JSON.parse(raw);
-        if (!parsed || !parsed.createdAt || Date.now() - Number(parsed.createdAt) > FLOWCRAFT_DRIVE_SESSION_TTL_MS) {
-            clearPersistedDriveSession();
-        }
-    } catch (error) {
-        clearPersistedDriveSession();
+async function loadDriveFiles() {
+    setFilesLoading("Loading files…");
+    btnRefreshDrive.disabled = true;
+    try {
+        const files = await window.FlowAuthDrive.listFlowchartFiles();
+        renderFileList(files);
+    } catch (err) {
+        setFilesLoading("Could not load Drive files: " + err.message);
+    } finally {
+        btnRefreshDrive.disabled = false;
     }
 }
 
-function openLoadingEditorTab() {
-    const editorTab = window.open("about:blank", "_blank");
-    if (!editorTab) return null;
-    editorTab.document.write(`<!DOCTYPE html><html><head><title>Opening FlowCraft...</title></head><body style="font-family:Inter,Arial,sans-serif;padding:24px;color:#0f172a;background:#f8fafc;">Opening FlowCraft editor...</body></html>`);
-    editorTab.document.close();
-    return editorTab;
-}
-
-function renderDriveList(files) {
+function renderFileList(files) {
+    driveFilesList.innerHTML = "";
     if (!files.length) {
-        setDriveListEmpty("No saved flowcharts found in Google Drive.");
+        driveFilesList.innerHTML = '<div class="empty-state">No flowcharts saved in Drive yet.</div>';
         return;
     }
-
-    driveFilesList.innerHTML = "";
-    files.forEach((file) => {
+    files.forEach(file => {
         const item = document.createElement("div");
-        item.className = "gdrive-file-item";
-        item.addEventListener("click", () => openDriveFileInEditor(file));
+        item.className = "drive-file-item";
 
         const info = document.createElement("div");
-        info.className = "gdrive-file-info";
+        info.className = "drive-file-info";
 
-        const nameEl = document.createElement("span");
-        nameEl.className = "gdrive-file-name";
-        nameEl.textContent = file.name.replace(".flowchart", "");
+        const name = document.createElement("span");
+        name.className = "drive-file-name";
+        name.textContent = file.name.replace(/\.(flowchart|json)$/, "");
 
-        const dateEl = document.createElement("span");
-        dateEl.className = "gdrive-file-date";
-        dateEl.textContent = "Modified: " + new Date(file.modifiedTime).toLocaleString();
+        const date = document.createElement("span");
+        date.className = "drive-file-date";
+        date.textContent = new Date(file.modifiedTime).toLocaleString();
 
-        const actions = document.createElement("div");
-        actions.className = "gdrive-file-actions";
-        const loadIcon = document.createElement("i");
-        loadIcon.className = "fa-solid fa-arrow-up-right-from-square";
+        info.appendChild(name);
+        info.appendChild(date);
 
-        info.appendChild(nameEl);
-        info.appendChild(dateEl);
-        actions.appendChild(loadIcon);
+        const icon = document.createElement("i");
+        icon.className = "fa-solid fa-arrow-up-right-from-square drive-file-open-icon";
+
         item.appendChild(info);
-        item.appendChild(actions);
+        item.appendChild(icon);
+        item.addEventListener("click", () => openDriveFile(file));
         driveFilesList.appendChild(item);
     });
 }
 
-async function refreshDriveList() {
-    if (!latestAuthState || !latestAuthState.driveReady) {
-        setDriveListEmpty("Sign in to load your saved flowcharts.");
-        return;
-    }
+async function openDriveFile(file) {
+    const tab = window.open("about:blank", "_blank");
+    if (!tab) { alert("Please allow pop-ups for this site."); return; }
 
-    driveFilesList.innerHTML = '<div class="empty-state">Loading Drive files...</div>';
-    btnRefreshDrive.disabled = true;
-    try {
-        const files = await window.FlowAuthDrive.listFlowchartFiles();
-        renderDriveList(files);
-        lastListedEmail = latestAuthState.userProfile ? latestAuthState.userProfile.email : "";
-    } catch (error) {
-        setDriveListEmpty("Could not load Google Drive files: " + error.message);
-    } finally {
-        btnRefreshDrive.disabled = !latestAuthState || !latestAuthState.driveReady;
-    }
-}
-
-async function openDriveFileInEditor(file) {
-    const editorTab = openLoadingEditorTab();
-    if (!editorTab) {
-        alert("Please allow popups to open the editor in a new tab.");
-        return;
-    }
+    tab.document.write('<html><body style="font-family:Inter,sans-serif;padding:24px;color:#0f172a;background:#f8fafc;">Opening ' + file.name.replace(/</g,"&lt;") + '…</body></html>');
+    tab.document.close();
 
     try {
-        persistDriveSessionFromState(window.FlowAuthDrive.getState());
+        persistDriveSession(window.FlowAuthDrive.getState());
         const content = await window.FlowAuthDrive.fetchDriveFlowchart(file.id);
-        const bootKey = persistEditorBootPayload({
-            type: "drive-file",
-            fileId: file.id,
-            fileName: file.name,
-            content
-        });
-        editorTab.location.replace(`editor.html?bootKey=${encodeURIComponent(bootKey)}`);
-    } catch (error) {
-        editorTab.close();
-        alert("Could not open flowchart from Google Drive: " + error.message);
+        const bootKey = persistBootPayload({ type: "drive-file", fileId: file.id, fileName: file.name, content });
+        tab.location.replace(buildEditorUrl({ bootKey }));
+    } catch (err) {
+        tab.close();
+        alert("Could not open flowchart: " + err.message);
     }
 }
 
-function openNewFlowchart() {
-    persistDriveSessionFromState(window.FlowAuthDrive.getState());
-    const editorTab = window.open("editor.html?mode=new", "_blank");
-    if (!editorTab) alert("Please allow popups to open the editor in a new tab.");
+// --- Auth state ---
+function onAuthState(state) {
+    // Update config modal input
+    if (inputClientId) inputClientId.value = state.googleClientId || "";
+
+    if (state.signedIn) {
+        authBody.style.display = "none";
+        profileRow.style.display = "flex";
+        document.getElementById("user-avatar").src = state.userProfile.picture || "";
+        document.getElementById("user-name").textContent = state.userProfile.name || "";
+        document.getElementById("user-email").textContent = state.userProfile.email || "";
+        btnRefreshDrive.disabled = !state.driveReady;
+        if (state.driveReady) {
+            persistDriveSession(state);
+            loadDriveFiles();
+        } else {
+            setFilesLoading("Connecting to Drive…");
+        }
+    } else {
+        authBody.style.display = "block";
+        profileRow.style.display = "none";
+        btnRefreshDrive.disabled = true;
+        setFilesLoading("Sign in to load your flowcharts.");
+        localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
+    }
 }
 
-async function importJsonToEditor(event) {
-    const file = event.target.files[0];
+// --- Event wiring ---
+btnNewFlowchart.addEventListener("click", () => {
+    persistDriveSession(window.FlowAuthDrive.getState());
+    openEditorTab(buildEditorUrl({ mode: "new" }));
+});
+
+btnImportJson.addEventListener("click", () => fileImportInput.click());
+
+fileImportInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
     if (!file) return;
-
-    const editorTab = openLoadingEditorTab();
-    if (!editorTab) {
-        alert("Please allow popups to open the editor in a new tab.");
-        fileImportInput.value = "";
-        return;
-    }
-
+    const tab = window.open("about:blank", "_blank");
+    if (!tab) { alert("Please allow pop-ups for this site."); fileImportInput.value = ""; return; }
     try {
         const content = JSON.parse(await file.text());
-        persistDriveSessionFromState(window.FlowAuthDrive.getState());
-        const bootKey = persistEditorBootPayload({
-            type: "imported-json",
-            fileName: file.name,
-            content
-        });
-        editorTab.location.replace(`editor.html?bootKey=${encodeURIComponent(bootKey)}`);
-    } catch (error) {
-        editorTab.close();
-        alert("Could not import JSON: " + error.message);
+        persistDriveSession(window.FlowAuthDrive.getState());
+        const bootKey = persistBootPayload({ type: "imported-json", fileName: file.name, content });
+        tab.location.replace(buildEditorUrl({ bootKey }));
+    } catch (err) {
+        tab.close();
+        alert("Could not import JSON: " + err.message);
     } finally {
         fileImportInput.value = "";
     }
-}
+});
 
-function updateConfigUiState(state) {
-    inputClientId.value = state.googleClientId || "";
-    if (state.configuredGoogleClientId && !state.allowLocalClientIdOverride) {
-        inputClientId.readOnly = true;
-        inputClientId.disabled = true;
-        btnSaveConfig.disabled = true;
-        btnClearConfig.disabled = true;
-        return;
+btnGoogleSignIn.addEventListener("click", async () => {
+    try {
+        await window.FlowAuthDrive.startGoogleSignIn();
+    } catch (err) {
+        if (err.code === "needs-config") { configModal.classList.add("active"); return; }
+        alert(err.message);
     }
-    inputClientId.readOnly = false;
-    inputClientId.disabled = false;
-    btnSaveConfig.disabled = false;
-    btnClearConfig.disabled = false;
-}
+});
 
-function renderAuthState(state) {
-    latestAuthState = state;
-    updateConfigUiState(state);
-    btnGoogleSignIn.style.display = state.signedIn ? "none" : "inline-flex";
-    userProfileCard.style.display = state.signedIn ? "flex" : "none";
-    btnRefreshDrive.disabled = !state.driveReady;
+btnSignOut.addEventListener("click", () => window.FlowAuthDrive.signOut());
 
-    if (state.driveReady) {
-        persistDriveSessionFromState(state);
-    } else {
-        clearPersistedDriveSession();
-    }
+btnRefreshDrive.addEventListener("click", loadDriveFiles);
 
-    if (state.signedIn && state.userProfile) {
-        userAvatar.src = state.userProfile.picture || "";
-        userName.textContent = state.userProfile.name || "Signed in";
-        userEmail.textContent = state.userProfile.email || "";
-        if (state.driveReady && lastListedEmail !== state.userProfile.email) {
-            refreshDriveList();
-        }
-    } else {
-        lastListedEmail = "";
-        setDriveListEmpty(state.trustedOrigin ? "Sign in to load your saved flowcharts." : "Google OAuth is disabled on this origin.");
-    }
-}
+btnConfigureGoogle.addEventListener("click", () => configModal.classList.add("active"));
+btnCloseConfig.addEventListener("click", () => configModal.classList.remove("active"));
 
-function setupEventListeners() {
-    btnGoogleSignIn.addEventListener("click", async () => {
-        try {
-            await window.FlowAuthDrive.startGoogleSignIn();
-        } catch (error) {
-            if (error.code === "needs-config") {
-                showGoogleConfigModal(true);
-                return;
-            }
-            alert(error.message);
-        }
-    });
-    btnGoogleSignOut.addEventListener("click", () => window.FlowAuthDrive.signOut());
-    btnImportJson.addEventListener("click", () => fileImportInput.click());
-    btnOpenNewFlowchart.addEventListener("click", openNewFlowchart);
-    btnRefreshDrive.addEventListener("click", refreshDriveList);
-    fileImportInput.addEventListener("change", importJsonToEditor);
-    btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
-    closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
-    btnSaveConfig.addEventListener("click", () => {
-        try {
-            window.FlowAuthDrive.setLocalGoogleClientId(inputClientId.value);
-            showGoogleConfigModal(false);
-        } catch (error) {
-            alert(error.message);
-        }
-    });
-    btnClearConfig.addEventListener("click", () => {
-        try {
-            window.FlowAuthDrive.clearLocalGoogleClientId();
-            showGoogleConfigModal(false);
-        } catch (error) {
-            alert(error.message);
-        }
-    });
-}
+btnSaveConfig.addEventListener("click", () => {
+    try {
+        window.FlowAuthDrive.setLocalGoogleClientId(inputClientId.value);
+        configModal.classList.remove("active");
+    } catch (err) { alert(err.message); }
+});
 
+btnClearConfig.addEventListener("click", () => {
+    try {
+        window.FlowAuthDrive.clearLocalGoogleClientId();
+        configModal.classList.remove("active");
+    } catch (err) { alert(err.message); }
+});
+
+// --- Init ---
 document.addEventListener("DOMContentLoaded", async () => {
-    cleanupStaleBootPayloads();
-    cleanupStaleDriveSession();
-    setupEventListeners();
-    await window.FlowAuthDrive.init({ onStateChange: renderAuthState });
+    await window.FlowAuthDrive.init({ onStateChange: onAuthState });
 });
