@@ -423,6 +423,26 @@ body, html {
     stroke-width: 1.6;
 }
 
+
+.line-icon {
+    width: 32px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    position: relative;
+}
+
+.line-icon::before {
+    content: "";
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    top: 50%;
+    height: 2px;
+    background: var(--text-muted);
+    border-radius: 2px;
+    transform: translateY(-50%);
+}
 .palette-item:hover .shape-icon {
     color: var(--accent-primary);
     border-color: var(--accent-primary);

@@ -54,6 +54,13 @@ let draggingLineEnd = null; // { lineId: string, end: 'from' | 'to' }
 let lineEndSnapTarget = null; // { nodeId: string, portName: string } | null
 let draggingLineRouteId = null;
 let lineRouteDragStartWaypoint = null;
+let lineEndDragMoved = false;
+let draggingStandaloneLineId = null;
+let lineDragStartCanvas = { x: 0, y: 0 };
+let lineDragStartFrom = null;
+let lineDragStartTo = null;
+let lineDragStartWaypoint = null;
+let lineDragMoved = false;
 
 // Snap to grid
 let snapGridEnabled = true;
@@ -877,6 +884,32 @@ function applyNodeSelection(nodeIds, options = {}) {
     }
 }
 
+function beginStandaloneLineDrag(line, e) {
+    if (!line) return;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+    draggingLineRouteId = null;
+    lineRouteDragStartWaypoint = null;
+
+    draggingStandaloneLineId = line.id;
+    lineDragStartCanvas = screenToCanvas(e.clientX, e.clientY);
+    lineDragStartFrom = { x: fromNode.x, y: fromNode.y };
+    lineDragStartTo = { x: toNode.x, y: toNode.y };
+    lineDragStartWaypoint = line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)
+        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
+        : null;
+    lineDragMoved = false;
+}
+
 function updateMarqueeSelection() {
     const hits = getMarqueeNodeHits();
     const selection = marqueeAdditive ? new Set([...marqueeBaseSelection, ...hits]) : hits;
@@ -921,7 +954,7 @@ function handleWorkspaceContextMenu(e) {
 }
 
 function hasActivePointerInteraction() {
-    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
+    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingStandaloneLineId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
 }
 
 function handleGlobalPointerAbort() {
@@ -958,6 +991,17 @@ function handleGlobalPointerMove(e) {
         const coords = screenToCanvas(e.clientX, e.clientY);
         lineDrawingMousePos = coords;
 
+        const line = lines.find(l => l.id === draggingLineEnd.lineId);
+        if (line) {
+            const movingNodeId = draggingLineEnd.end === "from" ? line.fromId : line.toId;
+            const movingNode = nodes[movingNodeId];
+            if (movingNode && movingNode.type === "line-anchor") {
+                movingNode.x = snap(coords.x);
+                movingNode.y = snap(coords.y);
+                lineEndDragMoved = true;
+            }
+        }
+
         lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
 
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
@@ -975,6 +1019,32 @@ function handleGlobalPointerMove(e) {
                 y: snap(coords.y)
             };
             renderConnectors();
+        }
+    } else if (draggingStandaloneLineId) {
+        const line = lines.find(l => l.id === draggingStandaloneLineId);
+        if (line) {
+            const fromNode = nodes[line.fromId];
+            const toNode = nodes[line.toId];
+            if (fromNode && toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor") {
+                const coords = screenToCanvas(e.clientX, e.clientY);
+                const dx = coords.x - lineDragStartCanvas.x;
+                const dy = coords.y - lineDragStartCanvas.y;
+
+                fromNode.x = snap(lineDragStartFrom.x + dx);
+                fromNode.y = snap(lineDragStartFrom.y + dy);
+                toNode.x = snap(lineDragStartTo.x + dx);
+                toNode.y = snap(lineDragStartTo.y + dy);
+
+                if (lineDragStartWaypoint) {
+                    line.manualWaypoint = {
+                        x: snap(lineDragStartWaypoint.x + dx),
+                        y: snap(lineDragStartWaypoint.y + dy)
+                    };
+                }
+
+                lineDragMoved = true;
+                renderConnectors();
+            }
         }
     } else if (draggingNodeId && nodes[draggingNodeId]) {
         // Move shape node
@@ -1073,21 +1143,32 @@ function handleGlobalPointerUp(e) {
         try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
     } else if (draggingLineEnd) {
         const line = lines.find(l => l.id === draggingLineEnd.lineId);
-        if (line && lineEndSnapTarget) {
-            if (draggingLineEnd.end === "from") {
-                line.fromId = lineEndSnapTarget.nodeId;
-                line.fromPort = lineEndSnapTarget.portName;
-            } else {
-                line.toId = lineEndSnapTarget.nodeId;
-                line.toPort = lineEndSnapTarget.portName;
+        let changed = false;
+        if (line) {
+            const endKey = draggingLineEnd.end === "from" ? "fromId" : "toId";
+            const portKey = draggingLineEnd.end === "from" ? "fromPort" : "toPort";
+            const prevNodeId = line[endKey];
+            const prevPort = line[portKey];
+
+            if (lineEndSnapTarget) {
+                line[endKey] = lineEndSnapTarget.nodeId;
+                line[portKey] = lineEndSnapTarget.portName;
+                changed = prevNodeId !== line[endKey] || prevPort !== line[portKey] || lineEndDragMoved;
+            } else if (lineEndDragMoved) {
+                changed = true;
             }
-            saveHistory();
-            saveAutosave();
+
+            if (changed) {
+                cleanupOrphanLineAnchors();
+                saveHistory();
+                saveAutosave();
+            }
         }
 
         draggingLineEnd = null;
         lineEndSnapTarget = null;
         lineDrawingMousePos = null;
+        lineEndDragMoved = false;
         document.body.classList.remove("line-end-dragging");
         document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
         renderConnectors();
@@ -1105,6 +1186,18 @@ function handleGlobalPointerUp(e) {
         draggingLineRouteId = null;
         lineRouteDragStartWaypoint = null;
         document.body.classList.remove("line-route-dragging");
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+        }
+        renderConnectors();
+    } else if (draggingStandaloneLineId) {
+        const moved = lineDragMoved;
+        draggingStandaloneLineId = null;
+        lineDragStartFrom = null;
+        lineDragStartTo = null;
+        lineDragStartWaypoint = null;
+        lineDragMoved = false;
         if (moved) {
             saveHistory();
             saveAutosave();
@@ -1156,7 +1249,7 @@ function handleGlobalPointerUp(e) {
 // --- Drag & Drop Library Shapes ---
 const LIBRARY_SHAPE_TYPES = new Set([
     "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-    "text-box", "sticky-note", "cloud"
+    "text-box", "sticky-note", "cloud", "line"
 ]);
 
 let libraryDragShapeType = "";
@@ -1208,6 +1301,11 @@ function resetTransientInteractions() {
     lineEndSnapTarget = null;
     draggingLineRouteId = null;
     lineRouteDragStartWaypoint = null;
+    draggingStandaloneLineId = null;
+    lineDragStartFrom = null;
+    lineDragStartTo = null;
+    lineDragStartWaypoint = null;
+    lineDragMoved = false;
     setMarqueeBoxVisibility(false);
     document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging");
     document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
@@ -1218,6 +1316,12 @@ function addNewShapeNode(shapeType, x, y) {
     const isTextBox = shapeType === "text-box";
     const isStickyNote = shapeType === "sticky-note";
     const isCloud = shapeType === "cloud";
+    const isLine = shapeType === "line";
+
+    if (isLine) {
+        createStandaloneLineAt(x, y);
+        return;
+    }
     
     nodes[id] = {
         id: id,
@@ -1225,14 +1329,14 @@ function addNewShapeNode(shapeType, x, y) {
         shapeType: shapeType,
         x: x,
         y: y,
-        width: 120,
-        height: isTextBox ? 36 : (isStickyNote ? 90 : (isCloud ? 72 : 60)),
-        text: isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape"),
+        width: isLine ? 140 : 120,
+        height: isTextBox ? 36 : (isStickyNote ? 90 : (isCloud ? 72 : (isLine ? 30 : 60))),
+        text: isLine ? "" : (isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape")),
         textOffset: { x: 0, y: 0 },
         textSize: 14,
-        bgColor: isTextBox ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff"),
+        bgColor: (isTextBox || isLine) ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff"),
         borderColor: isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b"),
-        borderWidth: isTextBox ? 0 : (isStickyNote ? 1 : 2),
+        borderWidth: isTextBox ? 0 : (isStickyNote ? 1 : (isLine ? 3 : 2)),
         borderStyle: "solid",
         textPosition: "center",
         url: ""
@@ -1242,6 +1346,50 @@ function addNewShapeNode(shapeType, x, y) {
     saveAutosave();
     render();
     selectElement(id, "node");
+}
+
+function createStandaloneLineAt(x, y) {
+    const fromAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_from";
+    const toAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_to";
+
+    nodes[fromAnchorId] = {
+        id: fromAnchorId,
+        type: "line-anchor",
+        x: snap(x - 70),
+        y: snap(y),
+        width: 0,
+        height: 0,
+        zIndex: 10
+    };
+
+    nodes[toAnchorId] = {
+        id: toAnchorId,
+        type: "line-anchor",
+        x: snap(x + 70),
+        y: snap(y),
+        width: 0,
+        height: 0,
+        zIndex: 10
+    };
+
+    const lineId = "line_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    lines.push({
+        id: lineId,
+        fromId: fromAnchorId,
+        fromPort: "right",
+        toId: toAnchorId,
+        toPort: "left",
+        lineType: "straight",
+        lineStyle: defaultLineSettings.lineStyle,
+        color: defaultLineSettings.color,
+        thickness: defaultLineSettings.thickness,
+        hasArrow: defaultLineSettings.hasArrow
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    selectElement(lineId, "line");
 }
 
 // --- Ports & Snap Checking ---
@@ -1254,6 +1402,7 @@ function checkPortHoverSnap(canvasX, canvasY) {
         if (nodeId === activePortNodeId) return;
         
         const node = nodes[nodeId];
+        if (!node || node.type === "line-anchor") return;
         const ports = getPortCoords(nodeId);
         
         Object.keys(ports).forEach(portName => {
@@ -1287,6 +1436,7 @@ function findNearestPort(canvasX, canvasY, radius = 24) {
 
     Object.keys(nodes).forEach(nodeId => {
         const node = nodes[nodeId];
+        if (!node || node.type === "line-anchor") return;
         const ports = getPortCoords(nodeId);
 
         Object.keys(ports).forEach(portName => {
@@ -1305,6 +1455,15 @@ function findNearestPort(canvasX, canvasY, radius = 24) {
 function getPortCoords(nodeId) {
     const node = nodes[nodeId];
     if (!node) return {};
+
+    if (node.type === "line-anchor") {
+        return {
+            top: { x: node.x, y: node.y },
+            right: { x: node.x, y: node.y },
+            bottom: { x: node.x, y: node.y },
+            left: { x: node.x, y: node.y }
+        };
+    }
     
     return {
         top: { x: node.x, y: node.y - node.height / 2 },
@@ -1357,6 +1516,10 @@ function render() {
     Object.keys(nodes).forEach(id => {
         const node = nodes[id];
         let nodeEl = document.getElementById("node-" + id);
+        if (!node || node.type === "line-anchor") {
+            if (nodeEl) nodeEl.remove();
+            return;
+        }
         
         if (!nodeEl) {
             nodeEl = document.createElement("div");
@@ -1625,6 +1788,11 @@ function generateShapeSVG(node) {
         case "cloud":
             return `<svg><path d="${buildCloudPathData(strokeW / 2, strokeW / 2, w - strokeW, h - strokeW)}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
 
+        case "line": {
+            const yMid = h / 2;
+            return `<svg><line x1="${strokeW / 2}" y1="${yMid}" x2="${w - strokeW / 2}" y2="${yMid}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" stroke-linecap="round"/></svg>`;
+        }
+
         default:
             return "";
     }
@@ -1680,7 +1848,11 @@ function renderConnectors() {
             e.stopPropagation();
             selectElement(line.id, "line");
             if (wasSelected) {
-                beginLineRouteDrag(line, e, fromCoords, toCoords);
+                const fromNode = nodes[line.fromId];
+                const toNode = nodes[line.toId];
+                const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+                if (isStandalone) beginStandaloneLineDrag(line, e);
+                else beginLineRouteDrag(line, e, fromCoords, toCoords);
             }
         });
         
@@ -1709,7 +1881,11 @@ function renderConnectors() {
             e.stopPropagation();
             selectElement(line.id, "line");
             if (wasSelected) {
-                beginLineRouteDrag(line, e, fromCoords, toCoords);
+                const fromNode = nodes[line.fromId];
+                const toNode = nodes[line.toId];
+                const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+                if (isStandalone) beginStandaloneLineDrag(line, e);
+                else beginLineRouteDrag(line, e, fromCoords, toCoords);
             }
         });
         svgOverlay.appendChild(overlay);
@@ -1745,6 +1921,8 @@ function renderConnectors() {
                 activePortName = null;
                 draggingLineEnd = { lineId: line.id, end };
                 lineEndSnapTarget = null;
+                lineEndDragMoved = false;
+                draggingStandaloneLineId = null;
                 document.body.classList.add("line-end-dragging");
             };
 
@@ -2425,6 +2603,7 @@ function deleteSelectedElement() {
             delete nodes[nodeId];
         });
         lines = lines.filter(l => !idsToDelete.has(l.fromId) && !idsToDelete.has(l.toId));
+        cleanupOrphanLineAnchors();
         saveHistory();
         saveAutosave();
         render();
@@ -2434,11 +2613,28 @@ function deleteSelectedElement() {
     selectElement(null);
 }
 
+function cleanupOrphanLineAnchors() {
+    const connectedNodeIds = new Set();
+    lines.forEach(line => {
+        if (line.fromId) connectedNodeIds.add(line.fromId);
+        if (line.toId) connectedNodeIds.add(line.toId);
+    });
+
+    Object.keys(nodes).forEach(nodeId => {
+        const node = nodes[nodeId];
+        if (!node || node.type !== "line-anchor") return;
+        if (!connectedNodeIds.has(nodeId)) {
+            delete nodes[nodeId];
+        }
+    });
+}
+
 function deleteNode(nodeId) {
     if (nodes[nodeId]) {
         delete nodes[nodeId];
         // Remove connected lines
         lines = lines.filter(l => l.fromId !== nodeId && l.toId !== nodeId);
+        cleanupOrphanLineAnchors();
         saveHistory();
         saveAutosave();
         render();
@@ -2447,6 +2643,7 @@ function deleteNode(nodeId) {
 
 function deleteLine(lineId) {
     lines = lines.filter(l => l.id !== lineId);
+    cleanupOrphanLineAnchors();
     saveHistory();
     saveAutosave();
     render();
@@ -3060,11 +3257,12 @@ function normalizeShapeType(shapeType) {
         connector: "circle",
         document: "document",
         preparation: "hexagon",
-        cloud: "cloud"
+        cloud: "cloud",
+        line: "line"
     };
     const supported = new Set([
         "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-        "text-box", "sticky-note", "cloud"
+        "text-box", "sticky-note", "cloud", "line"
     ]);
     const mapped = map[val] || val;
     return supported.has(mapped) ? mapped : "rectangle";
@@ -3993,6 +4191,11 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
         case "cloud":
             addCloudPath(ctx, x + strokeW / 2, y + strokeW / 2, w - strokeW, h - strokeW);
             break;
+        case "line":
+            ctx.beginPath();
+            ctx.moveTo(left, y + h / 2);
+            ctx.lineTo(x + w - halfStroke, y + h / 2);
+            break;
         case "sticky-note":
             ctx.beginPath();
             ctx.rect(left, top, width, height);
@@ -4325,6 +4528,8 @@ async function getFlowchartCanvasImage() {
     imageNodes.forEach((node, idx) => imageMap.set(node.id, loadedImages[idx]));
 
     orderedNodes.forEach(node => {
+        if (node.type === "line-anchor") return;
+
         const x = node.x - node.width / 2;
         const y = node.y - node.height / 2;
         const w = node.width;
