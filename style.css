@@ -1792,20 +1792,20 @@ body.login-page { background: var(--bg-primary, #0f172a); min-height: 100vh; dis
    EDITOR PAGE THEME (aligned with login page)
    ============================================= */
 body.editor-page {
-    background: #0f172a;
+    background: #f8fbff;
 }
 
 body.editor-page .app-container {
     background:
-        radial-gradient(1200px 500px at -10% -20%, rgba(14, 165, 233, 0.18), transparent 60%),
-        radial-gradient(900px 450px at 120% 120%, rgba(16, 185, 129, 0.12), transparent 60%),
-        #0f172a;
+        radial-gradient(1000px 450px at -10% -20%, rgba(14, 165, 233, 0.12), transparent 62%),
+        radial-gradient(800px 380px at 115% 120%, rgba(56, 189, 248, 0.10), transparent 60%),
+        linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
 }
 
 body.editor-page .sidebar {
-    background: rgba(30, 41, 59, 0.92);
-    border-right-color: #334155;
-    box-shadow: 0 14px 38px rgba(2, 6, 23, 0.5);
+    background: rgba(255, 255, 255, 0.94);
+    border-right-color: #dbe8f7;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10);
 }
 
 body.editor-page .sidebar-section h3,
@@ -1815,14 +1815,14 @@ body.editor-page .save-status,
 body.editor-page .empty-state,
 body.editor-page .map-name,
 body.editor-page .user-email {
-    color: #94a3b8;
+    color: #64748b;
 }
 
 body.editor-page .logo h1,
 body.editor-page .doc-title,
 body.editor-page .user-name,
 body.editor-page .palette-item span {
-    color: #f1f5f9;
+    color: #0f172a;
 }
 
 body.editor-page .sidebar-section h3,
@@ -1830,7 +1830,7 @@ body.editor-page .sidebar-header,
 body.editor-page .sidebar-footer,
 body.editor-page .topbar,
 body.editor-page .topbar-divider {
-    border-color: #334155;
+    border-color: #dbe8f7;
 }
 
 body.editor-page .google-auth-container,
@@ -1840,12 +1840,12 @@ body.editor-page .user-profile-card,
 body.editor-page .show-sidebar-btn,
 body.editor-page .topbar,
 body.editor-page .properties-panel {
-    background: rgba(15, 23, 42, 0.85);
-    border-color: #334155;
+    background: rgba(255, 255, 255, 0.92);
+    border-color: #dbe8f7;
 }
 
 body.editor-page .topbar {
-    box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
 }
 
 body.editor-page .topbar-btn,
@@ -1853,7 +1853,7 @@ body.editor-page .toggle-sidebar-btn,
 body.editor-page .show-sidebar-btn,
 body.editor-page .map-action-btn,
 body.editor-page .panel-close {
-    color: #cbd5e1;
+    color: #64748b;
 }
 
 body.editor-page .topbar-btn:hover,
@@ -1862,34 +1862,34 @@ body.editor-page .show-sidebar-btn:hover,
 body.editor-page .map-action-btn:hover,
 body.editor-page .btn-outline:hover,
 body.editor-page .saved-map-item:hover {
-    background: rgba(30, 41, 59, 0.95);
-    color: #f1f5f9;
-    border-color: #475569;
+    background: #f0f7ff;
+    color: #0f172a;
+    border-color: #c3d9f3;
 }
 
 body.editor-page .btn-outline {
-    border-color: #475569;
-    color: #e2e8f0;
+    border-color: #c3d9f3;
+    color: #0f172a;
 }
 
 body.editor-page .btn-secondary {
-    background: rgba(14, 165, 233, 0.14);
-    color: #7dd3fc;
+    background: #e0f2fe;
+    color: #0369a1;
 }
 
 body.editor-page .canvas {
-    background-color: #0f172a;
-    background-image: radial-gradient(rgba(148, 163, 184, 0.38) 1.2px, transparent 1.2px);
+    background-color: #f7fbff;
+    background-image: radial-gradient(rgba(148, 163, 184, 0.45) 1.2px, transparent 1.2px);
 }
 
 body.editor-page .properties-panel {
-    box-shadow: 0 14px 34px rgba(2, 6, 23, 0.5);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
 }
 
 body.editor-page .panel-header h4,
 body.editor-page .prop-group label,
 body.editor-page .shortcut-item {
-    color: #e2e8f0;
+    color: #0f172a;
 }
 
 body.editor-page .prop-group textarea,
@@ -1897,14 +1897,69 @@ body.editor-page .prop-group input[type="text"],
 body.editor-page .prop-group input[type="number"],
 body.editor-page .prop-group input[type="url"],
 body.editor-page .prop-group select {
-    background: #0f172a;
-    border-color: #334155;
-    color: #e2e8f0;
+    background: #ffffff;
+    border-color: #cddff3;
+    color: #0f172a;
 }
 
 body.editor-page .prop-group textarea:focus,
 body.editor-page .prop-group input:focus,
 body.editor-page .prop-group select:focus {
     border-color: #0ea5e9;
-    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
+}
+
+/* =============================================
+   LOGIN PAGE LIGHT THEME OVERRIDE
+   ============================================= */
+body.login-page {
+    background:
+        radial-gradient(1000px 450px at -10% -20%, rgba(14, 165, 233, 0.12), transparent 62%),
+        radial-gradient(800px 380px at 115% 120%, rgba(56, 189, 248, 0.10), transparent 60%),
+        linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+}
+
+.login-brand-name,
+.login-title {
+    color: #0f172a;
+}
+
+.login-subtitle,
+.login-help,
+.drive-file-date {
+    color: #64748b;
+}
+
+.login-card {
+    background: rgba(255, 255, 255, 0.94);
+    border-color: #dbe8f7;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.10);
+}
+
+.login-card-header h2,
+.drive-file-name {
+    color: #0f172a;
+}
+
+.drive-file-item {
+    background: #f8fbff;
+    border-color: #dbe8f7;
+}
+
+.drive-file-item:hover {
+    border-color: #93c5fd;
+    background: #f0f7ff;
+}
+
+.drive-file-open-icon {
+    color: #0284c7;
+}
+
+.drive-file-trash-btn {
+    color: #64748b;
+}
+
+.drive-file-trash-btn:hover {
+    color: #dc2626;
+    background: rgba(239, 68, 68, 0.12);
 }
