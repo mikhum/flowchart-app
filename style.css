@@ -443,6 +443,33 @@ body, html {
     border-radius: 2px;
     transform: translateY(-50%);
 }
+
+.paren-left-icon,
+.paren-right-icon {
+    border: none;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+}
+
+.paren-left-icon::before,
+.paren-right-icon::before {
+    font-family: 'Outfit', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.paren-left-icon::before {
+    content: "(";
+}
+
+.paren-right-icon::before {
+    content: ")";
+}
+
 .palette-item:hover .shape-icon {
     color: var(--accent-primary);
     border-color: var(--accent-primary);
@@ -1879,7 +1906,7 @@ body.editor-page .btn-secondary {
 
 body.editor-page .canvas {
     background-color: #f7fbff;
-    background-image: radial-gradient(rgba(148, 163, 184, 0.45) 1.2px, transparent 1.2px);
+    background-image: none;
 }
 
 body.editor-page .properties-panel {

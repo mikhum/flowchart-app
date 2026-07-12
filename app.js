@@ -1249,7 +1249,7 @@ function handleGlobalPointerUp(e) {
 // --- Drag & Drop Library Shapes ---
 const LIBRARY_SHAPE_TYPES = new Set([
     "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-    "text-box", "sticky-note", "cloud", "line"
+    "text-box", "sticky-note", "cloud", "line", "paren-left", "paren-right"
 ]);
 
 let libraryDragShapeType = "";
@@ -1317,9 +1317,12 @@ function addNewShapeNode(shapeType, x, y) {
     const isStickyNote = shapeType === "sticky-note";
     const isCloud = shapeType === "cloud";
     const isLine = shapeType === "line";
+    const isParenLeft = shapeType === "paren-left";
+    const isParenRight = shapeType === "paren-right";
 
-    if (isLine) {
-        createStandaloneLineAt(x, y);
+    if (isLine || isParenLeft || isParenRight) {
+        const glyphType = isParenLeft ? "paren-left" : (isParenRight ? "paren-right" : null);
+        createStandaloneLineAt(x, y, glyphType);
         return;
     }
     
@@ -1348,7 +1351,7 @@ function addNewShapeNode(shapeType, x, y) {
     selectElement(id, "node");
 }
 
-function createStandaloneLineAt(x, y) {
+function createStandaloneLineAt(x, y, glyphType = null) {
     const fromAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_from";
     const toAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_to";
 
@@ -1383,7 +1386,8 @@ function createStandaloneLineAt(x, y) {
         lineStyle: defaultLineSettings.lineStyle,
         color: defaultLineSettings.color,
         thickness: defaultLineSettings.thickness,
-        hasArrow: defaultLineSettings.hasArrow
+        hasArrow: glyphType ? "none" : defaultLineSettings.hasArrow,
+        glyphType: glyphType
     });
 
     saveHistory();
@@ -1807,16 +1811,16 @@ function renderConnectors() {
     // Defs markers Arrowheads
     svgOverlay.innerHTML = `
         <defs>
-            <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
             </marker>
-            <marker id="arrow-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arrow-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#64748b" />
             </marker>
-            <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
             </marker>
-            <marker id="arrow-start-selected" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <marker id="arrow-start-selected" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#0ea5e9" />
             </marker>
         </defs>
@@ -2139,6 +2143,11 @@ function getLineStraightPolyline(line, fromCoords, toCoords) {
 }
 
 function getLinePathD(line, fromCoords, toCoords) {
+    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
+        const ctrl = getParenthesisControlPoint(line, fromCoords, toCoords);
+        return `M ${fromCoords.x} ${fromCoords.y} Q ${ctrl.x} ${ctrl.y}, ${toCoords.x} ${toCoords.y}`;
+    }
+
     if (line.lineType === "straight") {
         const points = getLineStraightPolyline(line, fromCoords, toCoords);
         return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
@@ -2160,7 +2169,32 @@ function getLinePathD(line, fromCoords, toCoords) {
     return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
 }
 
+function getParenthesisControlPoint(line, fromCoords, toCoords) {
+    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return { x: line.manualWaypoint.x, y: line.manualWaypoint.y };
+    }
+
+    const dx = toCoords.x - fromCoords.x;
+    const dy = toCoords.y - fromCoords.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const midX = (fromCoords.x + toCoords.x) / 2;
+    const midY = (fromCoords.y + toCoords.y) / 2;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const side = line && line.glyphType === "paren-left" ? -1 : 1;
+    const bow = Math.max(22, Math.min(120, len * 0.65));
+
+    return {
+        x: midX + nx * bow * side,
+        y: midY + ny * bow * side
+    };
+}
+
 function getLineRouteHandlePoint(line, fromCoords, toCoords) {
+    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
+        return getParenthesisControlPoint(line, fromCoords, toCoords);
+    }
+
     if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
         return { x: line.manualWaypoint.x, y: line.manualWaypoint.y };
     }
@@ -3293,11 +3327,17 @@ function normalizeShapeType(shapeType) {
         document: "document",
         preparation: "hexagon",
         cloud: "cloud",
-        line: "line"
+        line: "line",
+        parenthesisleft: "paren-left",
+        parenthesisright: "paren-right",
+        "paren-left": "paren-left",
+        "paren-right": "paren-right",
+        "left-parenthesis": "paren-left",
+        "right-parenthesis": "paren-right"
     };
     const supported = new Set([
         "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-        "text-box", "sticky-note", "cloud", "line"
+        "text-box", "sticky-note", "cloud", "line", "paren-left", "paren-right"
     ]);
     const mapped = map[val] || val;
     return supported.has(mapped) ? mapped : "rectangle";
@@ -4446,7 +4486,17 @@ function drawLineOnCanvas(ctx, line) {
     let startDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
     let endDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
 
-    if (line.lineType === "curved") {
+    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
+        const ctrl = getParenthesisControlPoint(line, fromCoords, toCoords);
+
+        ctx.beginPath();
+        ctx.moveTo(fromCoords.x, fromCoords.y);
+        ctx.quadraticCurveTo(ctrl.x, ctrl.y, toCoords.x, toCoords.y);
+        ctx.stroke();
+
+        startDir = { x: ctrl.x - fromCoords.x, y: ctrl.y - fromCoords.y };
+        endDir = { x: toCoords.x - ctrl.x, y: toCoords.y - ctrl.y };
+    } else if (line.lineType === "curved") {
         if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
             const wx = line.manualWaypoint.x;
             const wy = line.manualWaypoint.y;
