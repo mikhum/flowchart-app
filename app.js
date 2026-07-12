@@ -1868,12 +1868,13 @@ function renderConnectors() {
             const wasSelected = selectedId === line.id && selectedType === "line";
             e.stopPropagation();
             selectElement(line.id, "line");
-            if (wasSelected) {
-                const fromNode = nodes[line.fromId];
-                const toNode = nodes[line.toId];
-                const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
-                if (isStandalone) beginStandaloneLineDrag(line, e);
-                else beginLineRouteDrag(line, e, fromCoords, toCoords);
+            const fromNode = nodes[line.fromId];
+            const toNode = nodes[line.toId];
+            const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+            if (isStandalone) {
+                beginStandaloneLineDrag(line, e);
+            } else if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
             }
         });
         
@@ -1901,12 +1902,13 @@ function renderConnectors() {
             const wasSelected = selectedId === line.id && selectedType === "line";
             e.stopPropagation();
             selectElement(line.id, "line");
-            if (wasSelected) {
-                const fromNode = nodes[line.fromId];
-                const toNode = nodes[line.toId];
-                const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
-                if (isStandalone) beginStandaloneLineDrag(line, e);
-                else beginLineRouteDrag(line, e, fromCoords, toCoords);
+            const fromNode = nodes[line.fromId];
+            const toNode = nodes[line.toId];
+            const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+            if (isStandalone) {
+                beginStandaloneLineDrag(line, e);
+            } else if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
             }
         });
         svgOverlay.appendChild(overlay);
