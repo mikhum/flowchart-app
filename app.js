@@ -2768,15 +2768,50 @@ function pasteCopiedElement() {
 
     if (copiedElement.type === "line") {
         const sourceLine = copiedElement.payload;
-        if (!nodes[sourceLine.fromId] || !nodes[sourceLine.toId]) {
+        const fromNode = nodes[sourceLine.fromId];
+        const toNode = nodes[sourceLine.toId];
+
+        if (!fromNode || !toNode) {
             saveStatus.textContent = "Could not paste line (missing nodes)";
             return;
+        }
+
+        let nextFromId = sourceLine.fromId;
+        let nextToId = sourceLine.toId;
+
+        // Standalone line-shapes use hidden line-anchor nodes.
+        // Clone and offset these anchors so pasted lines become independently draggable.
+        if (fromNode.type === "line-anchor" && toNode.type === "line-anchor") {
+            nextFromId = `line_anchor_${Date.now()}_${Math.floor(Math.random() * 1000)}_from`;
+            nextToId = `line_anchor_${Date.now()}_${Math.floor(Math.random() * 1000)}_to`;
+
+            nodes[nextFromId] = {
+                ...JSON.parse(JSON.stringify(fromNode)),
+                id: nextFromId,
+                x: snap((Number(fromNode.x) || 0) + offset),
+                y: snap((Number(fromNode.y) || 0) + offset)
+            };
+
+            nodes[nextToId] = {
+                ...JSON.parse(JSON.stringify(toNode)),
+                id: nextToId,
+                x: snap((Number(toNode.x) || 0) + offset),
+                y: snap((Number(toNode.y) || 0) + offset)
+            };
         }
 
         const newLineId = `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         lines.push({
             ...JSON.parse(JSON.stringify(sourceLine)),
-            id: newLineId
+            id: newLineId,
+            fromId: nextFromId,
+            toId: nextToId,
+            manualWaypoint: sourceLine.manualWaypoint
+                ? {
+                    x: snap((Number(sourceLine.manualWaypoint.x) || 0) + offset),
+                    y: snap((Number(sourceLine.manualWaypoint.y) || 0) + offset)
+                }
+                : null
         });
 
         saveHistory();

@@ -1787,3 +1787,124 @@ body.login-page { background: var(--bg-primary, #0f172a); min-height: 100vh; dis
 .drive-file-date { font-size: 12px; color: var(--text-muted, #64748b); }
 .drive-file-open-icon { color: var(--accent-primary, #0ea5e9); font-size: 14px; flex-shrink: 0; }
 @media (max-width: 768px) { .login-shell { flex-direction: column; padding: 24px 16px; } .login-hero { flex: none; padding-top: 8px; } .login-title { font-size: 26px; } }
+
+/* =============================================
+   EDITOR PAGE THEME (aligned with login page)
+   ============================================= */
+body.editor-page {
+    background: #0f172a;
+}
+
+body.editor-page .app-container {
+    background:
+        radial-gradient(1200px 500px at -10% -20%, rgba(14, 165, 233, 0.18), transparent 60%),
+        radial-gradient(900px 450px at 120% 120%, rgba(16, 185, 129, 0.12), transparent 60%),
+        #0f172a;
+}
+
+body.editor-page .sidebar {
+    background: rgba(30, 41, 59, 0.92);
+    border-right-color: #334155;
+    box-shadow: 0 14px 38px rgba(2, 6, 23, 0.5);
+}
+
+body.editor-page .sidebar-section h3,
+body.editor-page .palette-group h4,
+body.editor-page .theme-info,
+body.editor-page .save-status,
+body.editor-page .empty-state,
+body.editor-page .map-name,
+body.editor-page .user-email {
+    color: #94a3b8;
+}
+
+body.editor-page .logo h1,
+body.editor-page .doc-title,
+body.editor-page .user-name,
+body.editor-page .palette-item span {
+    color: #f1f5f9;
+}
+
+body.editor-page .sidebar-section h3,
+body.editor-page .sidebar-header,
+body.editor-page .sidebar-footer,
+body.editor-page .topbar,
+body.editor-page .topbar-divider {
+    border-color: #334155;
+}
+
+body.editor-page .google-auth-container,
+body.editor-page .saved-map-item,
+body.editor-page .palette-item,
+body.editor-page .user-profile-card,
+body.editor-page .show-sidebar-btn,
+body.editor-page .topbar,
+body.editor-page .properties-panel {
+    background: rgba(15, 23, 42, 0.85);
+    border-color: #334155;
+}
+
+body.editor-page .topbar {
+    box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+body.editor-page .topbar-btn,
+body.editor-page .toggle-sidebar-btn,
+body.editor-page .show-sidebar-btn,
+body.editor-page .map-action-btn,
+body.editor-page .panel-close {
+    color: #cbd5e1;
+}
+
+body.editor-page .topbar-btn:hover,
+body.editor-page .toggle-sidebar-btn:hover,
+body.editor-page .show-sidebar-btn:hover,
+body.editor-page .map-action-btn:hover,
+body.editor-page .btn-outline:hover,
+body.editor-page .saved-map-item:hover {
+    background: rgba(30, 41, 59, 0.95);
+    color: #f1f5f9;
+    border-color: #475569;
+}
+
+body.editor-page .btn-outline {
+    border-color: #475569;
+    color: #e2e8f0;
+}
+
+body.editor-page .btn-secondary {
+    background: rgba(14, 165, 233, 0.14);
+    color: #7dd3fc;
+}
+
+body.editor-page .canvas {
+    background-color: #0f172a;
+    background-image: radial-gradient(rgba(148, 163, 184, 0.38) 1.2px, transparent 1.2px);
+}
+
+body.editor-page .properties-panel {
+    box-shadow: 0 14px 34px rgba(2, 6, 23, 0.5);
+}
+
+body.editor-page .panel-header h4,
+body.editor-page .prop-group label,
+body.editor-page .shortcut-item {
+    color: #e2e8f0;
+}
+
+body.editor-page .prop-group textarea,
+body.editor-page .prop-group input[type="text"],
+body.editor-page .prop-group input[type="number"],
+body.editor-page .prop-group input[type="url"],
+body.editor-page .prop-group select {
+    background: #0f172a;
+    border-color: #334155;
+    color: #e2e8f0;
+}
+
+body.editor-page .prop-group textarea:focus,
+body.editor-page .prop-group input:focus,
+body.editor-page .prop-group select:focus {
+    border-color: #0ea5e9;
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
