@@ -444,6 +444,8 @@ body, html {
     transform: translateY(-50%);
 }
 
+.brace-left-icon,
+.brace-right-icon,
 .paren-left-icon,
 .paren-right-icon {
     border: none;
@@ -454,6 +456,8 @@ body, html {
     color: var(--text-muted);
 }
 
+.brace-left-icon::before,
+.brace-right-icon::before,
 .paren-left-icon::before,
 .paren-right-icon::before {
     font-family: 'Outfit', sans-serif;
@@ -462,12 +466,14 @@ body, html {
     line-height: 1;
 }
 
+.brace-left-icon::before,
 .paren-left-icon::before {
-    content: "(";
+    content: "[";
 }
 
+.brace-right-icon::before,
 .paren-right-icon::before {
-    content: ")";
+    content: "]";
 }
 
 .palette-item:hover .shape-icon {

@@ -1249,7 +1249,7 @@ function handleGlobalPointerUp(e) {
 // --- Drag & Drop Library Shapes ---
 const LIBRARY_SHAPE_TYPES = new Set([
     "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-    "text-box", "sticky-note", "cloud", "line", "paren-left", "paren-right"
+    "text-box", "sticky-note", "cloud", "line", "brace-left", "brace-right", "paren-left", "paren-right"
 ]);
 
 let libraryDragShapeType = "";
@@ -1317,11 +1317,9 @@ function addNewShapeNode(shapeType, x, y) {
     const isStickyNote = shapeType === "sticky-note";
     const isCloud = shapeType === "cloud";
     const isLine = shapeType === "line";
-    const isParenLeft = shapeType === "paren-left";
-    const isParenRight = shapeType === "paren-right";
+    const glyphType = normalizeLineGlyphType(shapeType);
 
-    if (isLine || isParenLeft || isParenRight) {
-        const glyphType = isParenLeft ? "paren-left" : (isParenRight ? "paren-right" : null);
+    if (isLine || glyphType) {
         createStandaloneLineAt(x, y, glyphType);
         return;
     }
@@ -1354,12 +1352,20 @@ function addNewShapeNode(shapeType, x, y) {
 function createStandaloneLineAt(x, y, glyphType = null) {
     const fromAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_from";
     const toAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_to";
+    const isBraceGlyph = isBraceGlyphType(glyphType);
+
+    const fromX = isBraceGlyph ? snap(x) : snap(x - 70);
+    const fromY = isBraceGlyph ? snap(y - 70) : snap(y);
+    const toX = isBraceGlyph ? snap(x) : snap(x + 70);
+    const toY = isBraceGlyph ? snap(y + 70) : snap(y);
+    const fromPort = isBraceGlyph ? "bottom" : "right";
+    const toPort = isBraceGlyph ? "top" : "left";
 
     nodes[fromAnchorId] = {
         id: fromAnchorId,
         type: "line-anchor",
-        x: snap(x - 70),
-        y: snap(y),
+        x: fromX,
+        y: fromY,
         width: 0,
         height: 0,
         zIndex: 10
@@ -1368,8 +1374,8 @@ function createStandaloneLineAt(x, y, glyphType = null) {
     nodes[toAnchorId] = {
         id: toAnchorId,
         type: "line-anchor",
-        x: snap(x + 70),
-        y: snap(y),
+        x: toX,
+        y: toY,
         width: 0,
         height: 0,
         zIndex: 10
@@ -1379,9 +1385,9 @@ function createStandaloneLineAt(x, y, glyphType = null) {
     lines.push({
         id: lineId,
         fromId: fromAnchorId,
-        fromPort: "right",
+        fromPort: fromPort,
         toId: toAnchorId,
-        toPort: "left",
+        toPort: toPort,
         lineType: "straight",
         lineStyle: defaultLineSettings.lineStyle,
         color: defaultLineSettings.color,
@@ -1394,6 +1400,17 @@ function createStandaloneLineAt(x, y, glyphType = null) {
     saveAutosave();
     render();
     selectElement(lineId, "line");
+}
+
+function normalizeLineGlyphType(shapeType) {
+    const val = String(shapeType || "").trim().toLowerCase();
+    if (val === "brace-left" || val === "paren-left" || val === "bracket-left" || val === "left-bracket") return "brace-left";
+    if (val === "brace-right" || val === "paren-right" || val === "bracket-right" || val === "right-bracket") return "brace-right";
+    return null;
+}
+
+function isBraceGlyphType(glyphType) {
+    return normalizeLineGlyphType(glyphType) === "brace-left" || normalizeLineGlyphType(glyphType) === "brace-right";
 }
 
 // --- Ports & Snap Checking ---
@@ -2143,9 +2160,8 @@ function getLineStraightPolyline(line, fromCoords, toCoords) {
 }
 
 function getLinePathD(line, fromCoords, toCoords) {
-    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
-        const ctrl = getParenthesisControlPoint(line, fromCoords, toCoords);
-        return `M ${fromCoords.x} ${fromCoords.y} Q ${ctrl.x} ${ctrl.y}, ${toCoords.x} ${toCoords.y}`;
+    if (isBraceGlyphType(line.glyphType)) {
+        return getBracePathD(line, fromCoords, toCoords);
     }
 
     if (line.lineType === "straight") {
@@ -2169,30 +2185,58 @@ function getLinePathD(line, fromCoords, toCoords) {
     return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
 }
 
-function getParenthesisControlPoint(line, fromCoords, toCoords) {
-    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
-        return { x: line.manualWaypoint.x, y: line.manualWaypoint.y };
-    }
-
+function getBraceGeometry(line, fromCoords, toCoords) {
     const dx = toCoords.x - fromCoords.x;
     const dy = toCoords.y - fromCoords.y;
     const len = Math.hypot(dx, dy) || 1;
     const midX = (fromCoords.x + toCoords.x) / 2;
     const midY = (fromCoords.y + toCoords.y) / 2;
+    const ux = dx / len;
+    const uy = dy / len;
     const nx = -dy / len;
     const ny = dx / len;
-    const side = line && line.glyphType === "paren-left" ? -1 : 1;
-    const bow = Math.max(22, Math.min(120, len * 0.65));
+    const normalizedGlyph = normalizeLineGlyphType(line?.glyphType);
+    const side = normalizedGlyph === "brace-left" ? 1 : -1;
+
+    const depth = Math.max(18, Math.min(56, len * 0.22));
+    const stemOffset = { x: nx * side * depth, y: ny * side * depth };
+
+    const topCorner = {
+        x: fromCoords.x + stemOffset.x,
+        y: fromCoords.y + stemOffset.y
+    };
+    const bottomCorner = {
+        x: toCoords.x + stemOffset.x,
+        y: toCoords.y + stemOffset.y
+    };
+    const center = (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y))
+        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
+        : { x: midX + stemOffset.x, y: midY + stemOffset.y };
 
     return {
-        x: midX + nx * bow * side,
-        y: midY + ny * bow * side
+        center,
+        topCorner,
+        bottomCorner,
+        startTangent: {
+            x: topCorner.x - fromCoords.x,
+            y: topCorner.y - fromCoords.y
+        },
+        endTangent: {
+            x: toCoords.x - bottomCorner.x,
+            y: toCoords.y - bottomCorner.y
+        },
+        axis: { x: ux, y: uy }
     };
 }
 
+function getBracePathD(line, fromCoords, toCoords) {
+    const geom = getBraceGeometry(line, fromCoords, toCoords);
+    return `M ${fromCoords.x} ${fromCoords.y} L ${geom.topCorner.x} ${geom.topCorner.y} L ${geom.bottomCorner.x} ${geom.bottomCorner.y} L ${toCoords.x} ${toCoords.y}`;
+}
+
 function getLineRouteHandlePoint(line, fromCoords, toCoords) {
-    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
-        return getParenthesisControlPoint(line, fromCoords, toCoords);
+    if (isBraceGlyphType(line.glyphType)) {
+        return getBraceGeometry(line, fromCoords, toCoords).center;
     }
 
     if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
@@ -3328,16 +3372,20 @@ function normalizeShapeType(shapeType) {
         preparation: "hexagon",
         cloud: "cloud",
         line: "line",
-        parenthesisleft: "paren-left",
-        parenthesisright: "paren-right",
-        "paren-left": "paren-left",
-        "paren-right": "paren-right",
-        "left-parenthesis": "paren-left",
-        "right-parenthesis": "paren-right"
+        parenthesisleft: "brace-left",
+        parenthesisright: "brace-right",
+        "paren-left": "brace-left",
+        "paren-right": "brace-right",
+        "left-parenthesis": "brace-left",
+        "right-parenthesis": "brace-right",
+        "brace-left": "brace-left",
+        "brace-right": "brace-right",
+        "left-brace": "brace-left",
+        "right-brace": "brace-right"
     };
     const supported = new Set([
         "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
-        "text-box", "sticky-note", "cloud", "line", "paren-left", "paren-right"
+        "text-box", "sticky-note", "cloud", "line", "brace-left", "brace-right"
     ]);
     const mapped = map[val] || val;
     return supported.has(mapped) ? mapped : "rectangle";
@@ -4486,16 +4534,18 @@ function drawLineOnCanvas(ctx, line) {
     let startDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
     let endDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
 
-    if (line.glyphType === "paren-left" || line.glyphType === "paren-right") {
-        const ctrl = getParenthesisControlPoint(line, fromCoords, toCoords);
+    if (isBraceGlyphType(line.glyphType)) {
+        const geom = getBraceGeometry(line, fromCoords, toCoords);
 
         ctx.beginPath();
         ctx.moveTo(fromCoords.x, fromCoords.y);
-        ctx.quadraticCurveTo(ctrl.x, ctrl.y, toCoords.x, toCoords.y);
+        ctx.lineTo(geom.topCorner.x, geom.topCorner.y);
+        ctx.lineTo(geom.bottomCorner.x, geom.bottomCorner.y);
+        ctx.lineTo(toCoords.x, toCoords.y);
         ctx.stroke();
 
-        startDir = { x: ctrl.x - fromCoords.x, y: ctrl.y - fromCoords.y };
-        endDir = { x: toCoords.x - ctrl.x, y: toCoords.y - ctrl.y };
+        startDir = geom.startTangent;
+        endDir = geom.endTangent;
     } else if (line.lineType === "curved") {
         if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
             const wx = line.manualWaypoint.x;
