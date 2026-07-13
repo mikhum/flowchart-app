@@ -56,10 +56,11 @@ let draggingLineRouteId = null;
 let lineRouteDragStartWaypoint = null;
 let lineEndDragMoved = false;
 let draggingStandaloneLineId = null;
+let draggingStandaloneLineIds = [];
 let lineDragStartCanvas = { x: 0, y: 0 };
-let lineDragStartFrom = null;
-let lineDragStartTo = null;
-let lineDragStartWaypoint = null;
+let lineDragStartFrom = {};
+let lineDragStartTo = {};
+let lineDragStartWaypoint = {};
 let lineDragMoved = false;
 
 // Snap to grid
@@ -635,13 +636,15 @@ function selectBorderColor(color) {
 
 function selectLineColor(color) {
     if (selectedType === "line") {
-        const line = lines.find(l => l.id === selectedId);
-        if (line) {
-            line.color = color;
-            saveHistory();
-            render();
-            updatePropertiesPanel();
-        }
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.color = color;
+        });
+        saveHistory();
+        render();
+        updatePropertiesPanel();
     }
 }
 
@@ -849,21 +852,108 @@ function getMarqueeRect() {
 function getMarqueeNodeHits() {
     const rect = getMarqueeRect();
     const hits = new Set();
+
+    const overlapsRect = (left, right, top, bottom) => !(right < rect.left || left > rect.right || bottom < rect.top || top > rect.bottom);
+
     Object.values(nodes).forEach(node => {
-        const nodeLeft = node.x - (node.width || 120) / 2;
-        const nodeRight = node.x + (node.width || 120) / 2;
-        const nodeTop = node.y - (node.height || 60) / 2;
-        const nodeBottom = node.y + (node.height || 60) / 2;
-        const overlaps = !(nodeRight < rect.left || nodeLeft > rect.right || nodeBottom < rect.top || nodeTop > rect.bottom);
-        if (overlaps) hits.add(node.id);
+        if (!node || node.type === "line-anchor") return;
+
+        const width = Number.isFinite(Number(node.width)) ? Number(node.width) : 120;
+        const height = Number.isFinite(Number(node.height)) ? Number(node.height) : 60;
+        const nodeLeft = node.x - width / 2;
+        const nodeRight = node.x + width / 2;
+        const nodeTop = node.y - height / 2;
+        const nodeBottom = node.y + height / 2;
+        if (overlapsRect(nodeLeft, nodeRight, nodeTop, nodeBottom)) hits.add(node.id);
     });
+
+    // Include standalone line/bracket objects by adding both of their anchor ids
+    // when the line's geometry overlaps the marquee rectangle.
+    lines.forEach(line => {
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+        const fromCoords = getPortCoords(line.fromId)[line.fromPort];
+        const toCoords = getPortCoords(line.toId)[line.toPort];
+        if (!fromCoords || !toCoords) return;
+
+        let points = [];
+        if (isBraceGlyphType(line.glyphType)) {
+            const geom = getBraceGeometry(line, fromCoords, toCoords);
+            points = [fromCoords, geom.topCorner, geom.center, geom.bottomCorner, toCoords];
+        } else if (line.lineType === "straight") {
+            points = getLineStraightPolyline(line, fromCoords, toCoords);
+        } else if (line.lineType === "curved") {
+            if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+                points = [fromCoords, line.manualWaypoint, toCoords];
+            } else {
+                const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+                const ctrlOffset = Math.min(120, distance * 0.4);
+                const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+                const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+                points = [
+                    fromCoords,
+                    { x: fromCoords.x + ctrl1.x, y: fromCoords.y + ctrl1.y },
+                    { x: toCoords.x + ctrl2.x, y: toCoords.y + ctrl2.y },
+                    toCoords
+                ];
+            }
+        } else {
+            points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+        }
+
+        if (!points || points.length === 0) return;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y);
+        });
+
+        if (overlapsRect(minX, maxX, minY, maxY)) {
+            hits.add(line.fromId);
+            hits.add(line.toId);
+        }
+    });
+
     return hits;
+}
+
+function getStandaloneLineIdsFromNodeSelection(nodeIdSet) {
+    const set = nodeIdSet instanceof Set ? nodeIdSet : new Set(nodeIdSet || []);
+    const ids = [];
+    lines.forEach((line) => {
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+        if (!isStandalone) return;
+        if (set.has(line.fromId) && set.has(line.toId)) ids.push(line.id);
+    });
+    return ids;
+}
+
+function getActiveSelectedLineIds() {
+    if (selectedType !== "line") return [];
+    const fromNodeSelection = getStandaloneLineIdsFromNodeSelection(selectedNodeIds);
+    if (fromNodeSelection.length > 0) return fromNodeSelection;
+    return selectedId ? [selectedId] : [];
 }
 
 function applyNodeSelection(nodeIds, options = {}) {
     const validNodeIds = Array.from(nodeIds).filter(nodeId => !!nodes[nodeId]);
     selectedNodeIds = new Set(validNodeIds);
-    if (selectedNodeIds.size > 0) {
+    const standaloneLineIds = getStandaloneLineIdsFromNodeSelection(selectedNodeIds);
+    const hasVisibleNodeSelection = validNodeIds.some((nodeId) => nodes[nodeId] && nodes[nodeId].type !== "line-anchor");
+
+    if (standaloneLineIds.length > 0 && !hasVisibleNodeSelection) {
+        selectedType = "line";
+        selectedId = standaloneLineIds[standaloneLineIds.length - 1];
+    } else if (selectedNodeIds.size > 0) {
         selectedType = "node";
         selectedId = validNodeIds[validNodeIds.length - 1];
     } else {
@@ -884,11 +974,37 @@ function applyNodeSelection(nodeIds, options = {}) {
     }
 }
 
+function toggleStandaloneLineInNodeSelection(line) {
+    if (!line) return;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+    if (!isStandalone) return;
+
+    const nextSelection = new Set(selectedNodeIds);
+    const isAlreadySelected = nextSelection.has(line.fromId) && nextSelection.has(line.toId);
+
+    if (isAlreadySelected) {
+        nextSelection.delete(line.fromId);
+        nextSelection.delete(line.toId);
+    } else {
+        nextSelection.add(line.fromId);
+        nextSelection.add(line.toId);
+    }
+
+    applyNodeSelection(nextSelection);
+}
+
 function beginStandaloneLineDrag(line, e) {
     if (!line) return;
     const fromNode = nodes[line.fromId];
     const toNode = nodes[line.toId];
     if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+    const activeSelectedLineIds = getActiveSelectedLineIds();
+    const dragLineIds = activeSelectedLineIds.includes(line.id) && activeSelectedLineIds.length > 1
+        ? activeSelectedLineIds
+        : [line.id];
 
     draggingNodeId = null;
     resizingNodeId = null;
@@ -901,12 +1017,26 @@ function beginStandaloneLineDrag(line, e) {
     lineRouteDragStartWaypoint = null;
 
     draggingStandaloneLineId = line.id;
+    draggingStandaloneLineIds = [...dragLineIds];
     lineDragStartCanvas = screenToCanvas(e.clientX, e.clientY);
-    lineDragStartFrom = { x: fromNode.x, y: fromNode.y };
-    lineDragStartTo = { x: toNode.x, y: toNode.y };
-    lineDragStartWaypoint = line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)
-        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
-        : null;
+    lineDragStartFrom = {};
+    lineDragStartTo = {};
+    lineDragStartWaypoint = {};
+
+    draggingStandaloneLineIds.forEach((lineId) => {
+        const targetLine = lines.find((l) => l.id === lineId);
+        if (!targetLine) return;
+        const fromAnchor = nodes[targetLine.fromId];
+        const toAnchor = nodes[targetLine.toId];
+        if (!fromAnchor || !toAnchor || fromAnchor.type !== "line-anchor" || toAnchor.type !== "line-anchor") return;
+
+        lineDragStartFrom[lineId] = { x: fromAnchor.x, y: fromAnchor.y, nodeId: targetLine.fromId };
+        lineDragStartTo[lineId] = { x: toAnchor.x, y: toAnchor.y, nodeId: targetLine.toId };
+        lineDragStartWaypoint[lineId] = targetLine.manualWaypoint && Number.isFinite(targetLine.manualWaypoint.x) && Number.isFinite(targetLine.manualWaypoint.y)
+            ? { x: targetLine.manualWaypoint.x, y: targetLine.manualWaypoint.y }
+            : null;
+    });
+
     lineDragMoved = false;
 }
 
@@ -1021,31 +1151,38 @@ function handleGlobalPointerMove(e) {
             renderConnectors();
         }
     } else if (draggingStandaloneLineId) {
-        const line = lines.find(l => l.id === draggingStandaloneLineId);
-        if (line) {
-            const fromNode = nodes[line.fromId];
-            const toNode = nodes[line.toId];
-            if (fromNode && toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor") {
-                const coords = screenToCanvas(e.clientX, e.clientY);
-                const dx = coords.x - lineDragStartCanvas.x;
-                const dy = coords.y - lineDragStartCanvas.y;
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const dx = coords.x - lineDragStartCanvas.x;
+        const dy = coords.y - lineDragStartCanvas.y;
 
-                fromNode.x = snap(lineDragStartFrom.x + dx);
-                fromNode.y = snap(lineDragStartFrom.y + dy);
-                toNode.x = snap(lineDragStartTo.x + dx);
-                toNode.y = snap(lineDragStartTo.y + dy);
+        draggingStandaloneLineIds.forEach((lineId) => {
+            const line = lines.find((l) => l.id === lineId);
+            if (!line) return;
 
-                if (lineDragStartWaypoint) {
-                    line.manualWaypoint = {
-                        x: snap(lineDragStartWaypoint.x + dx),
-                        y: snap(lineDragStartWaypoint.y + dy)
-                    };
-                }
+            const fromStart = lineDragStartFrom[lineId];
+            const toStart = lineDragStartTo[lineId];
+            if (!fromStart || !toStart) return;
 
-                lineDragMoved = true;
-                renderConnectors();
+            const fromNode = nodes[fromStart.nodeId];
+            const toNode = nodes[toStart.nodeId];
+            if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+            fromNode.x = snap(fromStart.x + dx);
+            fromNode.y = snap(fromStart.y + dy);
+            toNode.x = snap(toStart.x + dx);
+            toNode.y = snap(toStart.y + dy);
+
+            const waypointStart = lineDragStartWaypoint[lineId];
+            if (waypointStart) {
+                line.manualWaypoint = {
+                    x: snap(waypointStart.x + dx),
+                    y: snap(waypointStart.y + dy)
+                };
             }
-        }
+        });
+
+        lineDragMoved = true;
+        renderConnectors();
     } else if (draggingNodeId && nodes[draggingNodeId]) {
         // Move shape node
         const coords = screenToCanvas(e.clientX, e.clientY);
@@ -1194,9 +1331,10 @@ function handleGlobalPointerUp(e) {
     } else if (draggingStandaloneLineId) {
         const moved = lineDragMoved;
         draggingStandaloneLineId = null;
-        lineDragStartFrom = null;
-        lineDragStartTo = null;
-        lineDragStartWaypoint = null;
+        draggingStandaloneLineIds = [];
+        lineDragStartFrom = {};
+        lineDragStartTo = {};
+        lineDragStartWaypoint = {};
         lineDragMoved = false;
         if (moved) {
             saveHistory();
@@ -1302,9 +1440,10 @@ function resetTransientInteractions() {
     draggingLineRouteId = null;
     lineRouteDragStartWaypoint = null;
     draggingStandaloneLineId = null;
-    lineDragStartFrom = null;
-    lineDragStartTo = null;
-    lineDragStartWaypoint = null;
+    draggingStandaloneLineIds = [];
+    lineDragStartFrom = {};
+    lineDragStartTo = {};
+    lineDragStartWaypoint = {};
     lineDragMoved = false;
     setMarqueeBoxVisibility(false);
     document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging");
@@ -1860,17 +1999,31 @@ function renderConnectors() {
         // Draw physical line path
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", pathD);
-        path.setAttribute("class", "connector-line" + (selectedId === line.id && selectedType === "line" ? " selected" : ""));
-        path.style.stroke = selectedId === line.id && selectedType === "line" ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
+        const lineSelectedViaLineSelection = selectedId === line.id && selectedType === "line";
+        const lineSelectedViaAnchorSelection = selectedNodeIds.has(line.fromId) && selectedNodeIds.has(line.toId);
+        const isLineSelected = lineSelectedViaLineSelection || lineSelectedViaAnchorSelection;
+
+        path.setAttribute("class", "connector-line" + (isLineSelected ? " selected" : ""));
+        path.style.stroke = isLineSelected ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
         path.style.strokeWidth = `${line.thickness}px`;
         path.addEventListener("pointerdown", (e) => {
             if (tryStartNodeDragFromPointer(e)) return;
             const wasSelected = selectedId === line.id && selectedType === "line";
+            const activeSelectedLineIds = getActiveSelectedLineIds();
             e.stopPropagation();
-            selectElement(line.id, "line");
             const fromNode = nodes[line.fromId];
             const toNode = nodes[line.toId];
             const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+            if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+                e.preventDefault();
+                toggleStandaloneLineInNodeSelection(line);
+                return;
+            }
+
+            const shouldPreserveStandaloneGroupSelection = isStandalone && selectedType === "line" && activeSelectedLineIds.length > 1 && activeSelectedLineIds.includes(line.id);
+            if (!shouldPreserveStandaloneGroupSelection) {
+                selectElement(line.id, "line");
+            }
             if (isStandalone) {
                 beginStandaloneLineDrag(line, e);
             } else if (wasSelected) {
@@ -1883,7 +2036,7 @@ function renderConnectors() {
         else path.style.strokeDasharray = "none";
         
         // Arrows
-        const isSel = selectedId === line.id && selectedType === "line";
+        const isSel = isLineSelected;
         if (line.hasArrow === "end" || line.hasArrow === "both") {
             path.setAttribute("marker-end", isSel ? "url(#arrow-end-selected)" : "url(#arrow-end)");
         }
@@ -1900,11 +2053,21 @@ function renderConnectors() {
         overlay.addEventListener("pointerdown", (e) => {
             if (tryStartNodeDragFromPointer(e)) return;
             const wasSelected = selectedId === line.id && selectedType === "line";
+            const activeSelectedLineIds = getActiveSelectedLineIds();
             e.stopPropagation();
-            selectElement(line.id, "line");
             const fromNode = nodes[line.fromId];
             const toNode = nodes[line.toId];
             const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+            if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+                e.preventDefault();
+                toggleStandaloneLineInNodeSelection(line);
+                return;
+            }
+
+            const shouldPreserveStandaloneGroupSelection = isStandalone && selectedType === "line" && activeSelectedLineIds.length > 1 && activeSelectedLineIds.includes(line.id);
+            if (!shouldPreserveStandaloneGroupSelection) {
+                selectElement(line.id, "line");
+            }
             if (isStandalone) {
                 beginStandaloneLineDrag(line, e);
             } else if (wasSelected) {
@@ -1913,7 +2076,8 @@ function renderConnectors() {
         });
         svgOverlay.appendChild(overlay);
 
-        if (selectedId === line.id && selectedType === "line" && lineHandlesLayer) {
+        const activeLineIds = getActiveSelectedLineIds();
+        if (selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id && lineHandlesLayer) {
             const routePoint = getLineRouteHandlePoint(line, fromCoords, toCoords);
             const routeHandle = document.createElement("div");
             routeHandle.className = "line-route-handle";
@@ -2443,7 +2607,9 @@ function updatePropertiesPanel() {
         propNodeSection.style.display = "none";
         propLineSection.style.display = "block";
         
-        const line = lines.find(l => l.id === selectedId);
+        const lineIds = getActiveSelectedLineIds();
+        const referenceLineId = lineIds.length > 0 ? lineIds[lineIds.length - 1] : selectedId;
+        const line = lines.find(l => l.id === referenceLineId);
         if (line) {
             propLineType.value = line.lineType;
             propLineStyle.value = line.lineStyle;
@@ -2606,45 +2772,54 @@ function updateSelectedNodeBorderStyle() {
 
 function updateSelectedLineType() {
     if (selectedType === "line") {
-        const line = lines.find(l => l.id === selectedId);
-        if (line) {
-            line.lineType = propLineType.value;
-            saveHistory();
-            render();
-        }
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.lineType = propLineType.value;
+        });
+        saveHistory();
+        render();
     }
 }
 
 function updateSelectedLineStyle() {
     if (selectedType === "line") {
-        const line = lines.find(l => l.id === selectedId);
-        if (line) {
-            line.lineStyle = propLineStyle.value;
-            saveHistory();
-            render();
-        }
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.lineStyle = propLineStyle.value;
+        });
+        saveHistory();
+        render();
     }
 }
 
 function updateSelectedLineThickness() {
     if (selectedType === "line") {
-        const line = lines.find(l => l.id === selectedId);
-        if (line) {
-            line.thickness = parseFloat(propLineWidth.value);
-            saveHistory();
-            render();
-        }
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        const thickness = parseFloat(propLineWidth.value);
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.thickness = thickness;
+        });
+        saveHistory();
+        render();
     }
 }
 
 function updateSelectedLineArrows() {
     if (selectedType === "line") {
-        const line = lines.find(l => l.id === selectedId);
-        if (line) {
-            line.hasArrow = propLineArrows.value;
-            saveHistory();
-            render();
-        }
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.hasArrow = propLineArrows.value;
+        });
+        saveHistory();
+        render();
     }
 }
 
@@ -2688,7 +2863,16 @@ function deleteSelectedElement() {
         saveAutosave();
         render();
     } else if (selectedType === "line") {
-        deleteLine(selectedId);
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length > 1) {
+            lines = lines.filter(l => !lineIds.includes(l.id));
+            cleanupOrphanLineAnchors();
+            saveHistory();
+            saveAutosave();
+            render();
+        } else {
+            deleteLine(selectedId);
+        }
     }
     selectElement(null);
 }
@@ -2753,10 +2937,20 @@ function bringToFront() {
     }
 
     if (selectedType === "line") {
-        const lineIndex = lines.findIndex(l => l.id === selectedId);
-        if (lineIndex === -1 || lineIndex === lines.length - 1) return;
-        const [line] = lines.splice(lineIndex, 1);
-        lines.push(line);
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        if (lineIds.length === 1) {
+            const lineIndex = lines.findIndex(l => l.id === selectedId);
+            if (lineIndex === -1 || lineIndex === lines.length - 1) return;
+            const [line] = lines.splice(lineIndex, 1);
+            lines.push(line);
+        } else {
+            const selectedSet = new Set(lineIds);
+            const selectedLines = lines.filter((l) => selectedSet.has(l.id));
+            const unselectedLines = lines.filter((l) => !selectedSet.has(l.id));
+            if (selectedLines.length === 0) return;
+            lines = [...unselectedLines, ...selectedLines];
+        }
         saveHistory();
         saveAutosave();
         render();
@@ -2787,10 +2981,20 @@ function sendToBack() {
     }
 
     if (selectedType === "line") {
-        const lineIndex = lines.findIndex(l => l.id === selectedId);
-        if (lineIndex <= 0) return;
-        const [line] = lines.splice(lineIndex, 1);
-        lines.unshift(line);
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        if (lineIds.length === 1) {
+            const lineIndex = lines.findIndex(l => l.id === selectedId);
+            if (lineIndex <= 0) return;
+            const [line] = lines.splice(lineIndex, 1);
+            lines.unshift(line);
+        } else {
+            const selectedSet = new Set(lineIds);
+            const selectedLines = lines.filter((l) => selectedSet.has(l.id));
+            const unselectedLines = lines.filter((l) => !selectedSet.has(l.id));
+            if (selectedLines.length === 0) return;
+            lines = [...selectedLines, ...unselectedLines];
+        }
         saveHistory();
         saveAutosave();
         render();
@@ -2920,6 +3124,41 @@ function nudgeSelectedNodesBy(dx, dy) {
     return true;
 }
 
+function nudgeSelectedStandaloneLineBy(dx, dy) {
+    if (selectedType !== "line") return false;
+
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return false;
+
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+        if (!isStandalone) return;
+
+        fromNode.x = Math.round((Number(fromNode.x) || 0) + dx);
+        fromNode.y = Math.round((Number(fromNode.y) || 0) + dy);
+        toNode.x = Math.round((Number(toNode.x) || 0) + dx);
+        toNode.y = Math.round((Number(toNode.y) || 0) + dy);
+
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            line.manualWaypoint = {
+                x: Math.round((Number(line.manualWaypoint.x) || 0) + dx),
+                y: Math.round((Number(line.manualWaypoint.y) || 0) + dy)
+            };
+        }
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
 // --- Keyboard Handling ---
 function handleKeyDown(e) {
     // Disable shortcuts if writing text or in modals
@@ -2939,7 +3178,7 @@ function handleKeyDown(e) {
     if (arrowNudges[e.key]) {
         const step = e.shiftKey ? 10 : 1;
         const { dx, dy } = arrowNudges[e.key];
-        const moved = nudgeSelectedNodesBy(dx * step, dy * step);
+        const moved = nudgeSelectedNodesBy(dx * step, dy * step) || nudgeSelectedStandaloneLineBy(dx * step, dy * step);
         if (moved) e.preventDefault();
         return;
     }
