@@ -72,6 +72,10 @@ let currentDocName = "Untitled Flowchart";
 let currentLocalSaveName = "";
 let currentDriveFileId = null; // Google Drive File ID
 let jsonExportFileHandle = null;
+const DRIVE_AUTOSAVE_INTERVAL_MS = 15000;
+let driveAutosaveTimer = null;
+let driveAutosaveInFlight = false;
+let lastDriveSavedFingerprint = "";
 
 // Google OAuth & GIS States
 const configuredGoogleClientId = (
@@ -494,6 +498,10 @@ function init() {
     saveHistory(); // initial state
     render();
     centerCanvas();
+
+    if (currentDriveFileId && accessToken) {
+        lastDriveSavedFingerprint = JSON.stringify(getExportPayload());
+    }
 }
 
 function createStartingTemplate() {
@@ -3500,6 +3508,52 @@ function saveAutosave() {
         lines: lines,
         name: currentDocName
     }));
+    scheduleDriveAutosave();
+}
+
+function clearDriveAutosaveState() {
+    if (driveAutosaveTimer) {
+        clearTimeout(driveAutosaveTimer);
+        driveAutosaveTimer = null;
+    }
+    driveAutosaveInFlight = false;
+    lastDriveSavedFingerprint = "";
+}
+
+function canAutosaveToDrive() {
+    return !!accessToken && !!currentDriveFileId;
+}
+
+function scheduleDriveAutosave() {
+    if (!canAutosaveToDrive()) return;
+    const currentFingerprint = JSON.stringify(getExportPayload());
+    if (currentFingerprint === lastDriveSavedFingerprint) return;
+
+    if (driveAutosaveTimer) clearTimeout(driveAutosaveTimer);
+    driveAutosaveTimer = setTimeout(() => {
+        driveAutosaveTimer = null;
+        triggerDriveAutosave();
+    }, DRIVE_AUTOSAVE_INTERVAL_MS);
+
+    saveStatus.textContent = "Changes pending (Drive autosave)";
+}
+
+async function triggerDriveAutosave() {
+    if (!canAutosaveToDrive() || driveAutosaveInFlight) return;
+
+    const currentFingerprint = JSON.stringify(getExportPayload());
+    if (currentFingerprint === lastDriveSavedFingerprint) return;
+
+    driveAutosaveInFlight = true;
+    try {
+        await saveToGoogleDrive({ silent: true, source: "autosave" });
+    } finally {
+        driveAutosaveInFlight = false;
+        const latestFingerprint = JSON.stringify(getExportPayload());
+        if (canAutosaveToDrive() && latestFingerprint !== lastDriveSavedFingerprint) {
+            scheduleDriveAutosave();
+        }
+    }
 }
 
 // --- Import/Export Local Files JSON ---
@@ -4197,6 +4251,7 @@ function signOutGoogle() {
     document.getElementById("gdrive-actions").style.display = "none";
     saveStatus.textContent = "Saved locally";
     currentDriveFileId = null;
+    clearDriveAutosaveState();
     
     // Revoke token if exists
     if (revokedEmail) {
@@ -4204,7 +4259,8 @@ function signOutGoogle() {
     }
 }
 
-async function saveToGoogleDrive() {
+async function saveToGoogleDrive(options = {}) {
+    const silent = !!options.silent;
     if (!ensureTrustedOriginForGoogle()) return;
 
     if (!accessToken) {
@@ -4214,11 +4270,12 @@ async function saveToGoogleDrive() {
     }
     
     const flowchartData = getExportPayload();
+    const saveFingerprint = JSON.stringify(flowchartData);
     
     const fileContent = JSON.stringify(flowchartData, null, 2);
     const filename = currentDocName + ".flowchart";
     
-    saveStatus.textContent = "Saving to Google Drive...";
+    saveStatus.textContent = silent ? "Auto-saving to Google Drive..." : "Saving to Google Drive...";
     
     try {
         const metadata = {
@@ -4260,12 +4317,19 @@ async function saveToGoogleDrive() {
         
         const file = await response.json();
         currentDriveFileId = file.id;
+        lastDriveSavedFingerprint = saveFingerprint;
         
-        saveStatus.textContent = "Cloud saved";
-        alert(`Successfully saved to Google Drive!\nFile ID: ${file.id}`);
+        saveStatus.textContent = silent ? "Cloud auto-saved" : "Cloud saved";
+        if (!silent) {
+            alert(`Successfully saved to Google Drive!\nFile ID: ${file.id}`);
+        }
     } catch(err) {
         saveStatus.textContent = "Save failed";
-        alert("Google Drive upload failed: " + err.message);
+        if (silent) {
+            console.warn("Google Drive auto-save failed:", err);
+        } else {
+            alert("Google Drive upload failed: " + err.message);
+        }
     }
 }
 
