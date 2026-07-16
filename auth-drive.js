@@ -171,16 +171,21 @@
             error.code = "needs-config";
             throw error;
         }
-        return requestDriveAccess({ prompt: "consent" });
+        return requestDriveAccess({ prompt: "" });
     }
 
-    function signOut() {
+    function signOut(options = {}) {
+        const shouldRevoke = !!options.revoke;
         const revokedToken = accessToken;
         resetTransientAuthState();
-        if (revokedToken && typeof google !== "undefined" && google.accounts && google.accounts.oauth2) {
+        if (shouldRevoke && revokedToken && typeof google !== "undefined" && google.accounts && google.accounts.oauth2) {
             google.accounts.oauth2.revoke(revokedToken, () => {});
         }
         notifyState();
+    }
+
+    function revokeGoogleAccess() {
+        signOut({ revoke: true });
     }
 
     function setLocalGoogleClientId(clientId) {
@@ -244,6 +249,7 @@
         getState,
         startGoogleSignIn,
         signOut,
+        revokeGoogleAccess,
         requestDriveAccess,
         listFlowchartFiles,
         fetchDriveFlowchart,

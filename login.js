@@ -157,6 +157,9 @@ async function openDriveFile(file) {
 function onAuthState(state) {
     // Update config modal input
     if (inputClientId) inputClientId.value = state.googleClientId || "";
+    const canConfigureOAuth = !state.configuredGoogleClientId || state.allowLocalClientIdOverride;
+    btnConfigureGoogle.style.display = canConfigureOAuth ? "inline-flex" : "none";
+    if (!canConfigureOAuth) configModal.classList.remove("active");
 
     if (state.signedIn) {
         authBody.style.display = "none";
