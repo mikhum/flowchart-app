@@ -76,6 +76,7 @@ const DRIVE_AUTOSAVE_INTERVAL_MS = 15000;
 let driveAutosaveTimer = null;
 let driveAutosaveInFlight = false;
 let lastDriveSavedFingerprint = "";
+let driveAutosaveHeartbeat = null;
 
 // Google OAuth & GIS States
 const configuredGoogleClientId = (
@@ -502,6 +503,7 @@ function init() {
     saveHistory(); // initial state
     render();
     centerCanvas();
+    startDriveAutosaveHeartbeat();
 }
 
 function createStartingTemplate() {
@@ -3522,6 +3524,16 @@ function clearDriveAutosaveState() {
     lastDriveSavedFingerprint = "";
 }
 
+function startDriveAutosaveHeartbeat() {
+    if (driveAutosaveHeartbeat) return;
+    driveAutosaveHeartbeat = setInterval(() => {
+        if (!canAutosaveToDrive() || driveAutosaveInFlight) return;
+        const currentFingerprint = JSON.stringify(getExportPayload());
+        if (currentFingerprint === lastDriveSavedFingerprint) return;
+        triggerDriveAutosave();
+    }, DRIVE_AUTOSAVE_INTERVAL_MS);
+}
+
 function canAutosaveToDrive() {
     return !!accessToken && !!currentDriveFileId;
 }
@@ -3548,7 +3560,7 @@ async function triggerDriveAutosave() {
 
     driveAutosaveInFlight = true;
     try {
-        await saveToGoogleDrive({ silent: true, source: "autosave" });
+        await saveToGoogleDrive({ silent: true, allowRetryOnAuthFailure: true, source: "autosave" });
     } finally {
         driveAutosaveInFlight = false;
         const latestFingerprint = JSON.stringify(getExportPayload());
@@ -4263,6 +4275,7 @@ function signOutGoogle() {
 
 async function saveToGoogleDrive(options = {}) {
     const silent = !!options.silent;
+    const allowRetryOnAuthFailure = !!options.allowRetryOnAuthFailure;
     if (!ensureTrustedOriginForGoogle()) return;
 
     if (!accessToken) {
@@ -4314,6 +4327,15 @@ async function saveToGoogleDrive(options = {}) {
             },
             body: multipartRequestBody
         });
+
+        if (!response.ok && (response.status === 401 || response.status === 403) && allowRetryOnAuthFailure) {
+            accessToken = "";
+            if (tokenClient) {
+                tokenClient.requestAccessToken({ prompt: "" });
+                saveStatus.textContent = "Refreshing Drive session...";
+            }
+            throw new Error("Drive authorization expired. Retrying after token refresh.");
+        }
         
         if (!response.ok) throw new Error("HTTP error " + response.status);
         
