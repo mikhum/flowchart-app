@@ -495,13 +495,13 @@ function init() {
         initGoogleClient();
     }
 
-    saveHistory(); // initial state
-    render();
-    centerCanvas();
-
     if (currentDriveFileId && accessToken) {
         lastDriveSavedFingerprint = JSON.stringify(getExportPayload());
     }
+
+    saveHistory(); // initial state
+    render();
+    centerCanvas();
 }
 
 function createStartingTemplate() {
@@ -3346,6 +3346,8 @@ function saveHistory() {
     if (undoStack.length > MAX_HISTORY) {
         undoStack.shift();
     }
+
+    scheduleDriveAutosave();
 }
 
 function undo() {
@@ -4477,6 +4479,7 @@ async function loadGoogleDriveFile(fileId) {
             currentDriveFileId = fileId;
             currentLocalSaveName = "";
             loadSessionData(normalized.data);
+            lastDriveSavedFingerprint = JSON.stringify(getExportPayload());
             undoStack = [];
             redoStack = [];
             saveHistory();
