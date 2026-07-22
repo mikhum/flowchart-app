@@ -1,4 +1,4 @@
-/* FlowChart - Premium Flowchart Stylesheet */
+/* FlowCraft - Premium Flowchart Stylesheet */
 
 :root {
     /* Rich Harmonious Color Palette */
@@ -751,12 +751,28 @@ body, html {
     height: 100%;
     overflow: visible;
     pointer-events: none;
+}
+
+.svg-connector-back {
+    z-index: 2;
+}
+
+.svg-connector-front {
     z-index: 4;
 }
 
-body.line-edit-mode .svg-connector-overlay,
-body.line-end-dragging .svg-connector-overlay {
+.svg-connector-hit {
+    z-index: 5;
+}
+
+body.line-edit-mode .svg-connector-front,
+body.line-end-dragging .svg-connector-front {
     z-index: 7;
+}
+
+body.line-edit-mode .svg-connector-hit,
+body.line-end-dragging .svg-connector-hit {
+    z-index: 8;
 }
 
 .connector-line {
@@ -786,7 +802,7 @@ body.line-end-dragging .svg-connector-overlay {
     stroke: transparent;
     stroke-width: 12px;
     cursor: pointer;
-    pointer-events: none;
+    pointer-events: stroke;
 }
 
 body.line-edit-mode .connector-line-overlay,

@@ -1,4 +1,4 @@
-// FlowChart - Core Flowchart & Infrastructure Engine
+// FlowCraft - Core Flowchart & Infrastructure Engine
 const APP_BUILD = "login-separated";
 const BUILD_INFO_PATH = "build-info.json";
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
@@ -118,7 +118,7 @@ const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
 
 function logStartup(message) {
     if (!startupDebugEnabled) return;
-    console.info("[FlowChart startup]", message);
+    console.info("[FlowCraft startup]", message);
 }
 
 function showStartupDebugStatus(pathLabel) {
@@ -257,9 +257,11 @@ function saveDefaultLineSettings() {
 const workspace = document.getElementById("workspace");
 const canvas = document.getElementById("canvas");
 const nodesContainer = document.getElementById("nodes-container");
+const svgOverlayBack = document.getElementById("svg-overlay-back");
+const svgOverlayFront = document.getElementById("svg-overlay-front");
+const svgOverlayHit = document.getElementById("svg-overlay-hit");
 const lineHandlesLayer = document.getElementById("line-handles-layer");
 const nodeHandlesLayer = document.getElementById("node-handles-layer");
-const svgOverlay = document.getElementById("svg-overlay");
 const marqueeSelectionBox = document.getElementById("marquee-selection-box");
 const zoomIndicator = document.getElementById("zoom-indicator");
 const docTitle = document.getElementById("doc-title");
@@ -374,13 +376,13 @@ async function updateBuildBadge() {
         if (!shortSha) return;
 
         setBuildBadgeLabel(`Commit ${shortSha}`);
-        console.info("FlowChart build:", shortSha);
+        console.info("FlowCraft build:", shortSha);
         return;
     } catch (err) {
         console.warn("Unable to load build metadata.", err);
     }
 
-    console.info("FlowChart build:", APP_BUILD);
+    console.info("FlowCraft build:", APP_BUILD);
 }
 
 // --- Drive Session Hydration (from login page handoff) ---
@@ -1627,6 +1629,7 @@ function createStandaloneLineAt(x, y, glyphType = null) {
     };
 
     const lineId = "line_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nextZIndex = getNextFrontLineZIndex();
     lines.push({
         id: lineId,
         fromId: fromAnchorId,
@@ -1641,7 +1644,8 @@ function createStandaloneLineAt(x, y, glyphType = null) {
         glyphType: glyphType,
         label: "",
         labelSize: 14,
-        labelOffset: { x: 0, y: -18 }
+        labelOffset: { x: 0, y: -18 },
+        zIndex: nextZIndex
     });
 
     saveHistory();
@@ -1659,6 +1663,22 @@ function normalizeLineGlyphType(shapeType) {
 
 function isBraceGlyphType(glyphType) {
     return normalizeLineGlyphType(glyphType) === "brace-left" || normalizeLineGlyphType(glyphType) === "brace-right";
+}
+
+function getNextFrontLineZIndex() {
+    const maxFront = lines.reduce((max, line) => {
+        const zIndex = Number(line?.zIndex);
+        return Number.isFinite(zIndex) && zIndex > max ? zIndex : max;
+    }, 0);
+    return maxFront + 1;
+}
+
+function getNextBackLineZIndex() {
+    const minBack = lines.reduce((min, line) => {
+        const zIndex = Number(line?.zIndex);
+        return Number.isFinite(zIndex) && zIndex < min ? zIndex : min;
+    }, 0);
+    return minBack - 1;
 }
 
 // --- Ports & Snap Checking ---
@@ -1751,6 +1771,7 @@ function createConnectorLine(fromId, fromPort, toId, toPort) {
     if (exists) return;
     
     const id = "line_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nextZIndex = getNextFrontLineZIndex();
     lines.push({
         id: id,
         fromId: fromId,
@@ -1764,7 +1785,8 @@ function createConnectorLine(fromId, fromPort, toId, toPort) {
         hasArrow: defaultLineSettings.hasArrow,
         label: "",
         labelSize: 14,
-        labelOffset: { x: 0, y: -18 }
+        labelOffset: { x: 0, y: -18 },
+        zIndex: nextZIndex
     });
     
     saveHistory();
@@ -2072,30 +2094,55 @@ function generateShapeSVG(node) {
 
 // --- Connector Lines rendering ---
 function renderConnectors() {
-    svgOverlay.innerHTML = "";
+    if (svgOverlayBack) svgOverlayBack.innerHTML = "";
+    if (svgOverlayFront) svgOverlayFront.innerHTML = "";
+    if (svgOverlayHit) svgOverlayHit.innerHTML = "";
     if (lineHandlesLayer) lineHandlesLayer.innerHTML = "";
     if (nodeHandlesLayer) nodeHandlesLayer.innerHTML = "";
     
     // Defs markers Arrowheads
-    svgOverlay.innerHTML = `
+    if (svgOverlayBack) svgOverlayBack.innerHTML = `
         <defs>
-            <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <marker id="arrow-end-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
             </marker>
-            <marker id="arrow-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <marker id="arrow-start-back" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#64748b" />
             </marker>
-            <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <marker id="arrow-end-selected-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
             </marker>
-            <marker id="arrow-start-selected" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <marker id="arrow-start-selected-back" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#0ea5e9" />
+            </marker>
+        </defs>
+    `;
+
+    if (svgOverlayFront) svgOverlayFront.innerHTML = `
+        <defs>
+            <marker id="arrow-end-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-start-front" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-end-selected-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
+            </marker>
+            <marker id="arrow-start-selected-front" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
                 <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#0ea5e9" />
             </marker>
         </defs>
     `;
 
     // 1. Draw existing connection lines
-    lines.forEach(line => {
+    const orderedLines = lines.slice().sort((a, b) => {
+        const zDiff = (Number(a?.zIndex) || 0) - (Number(b?.zIndex) || 0);
+        if (zDiff !== 0) return zDiff;
+        return lines.indexOf(a) - lines.indexOf(b);
+    });
+
+    orderedLines.forEach(line => {
         const fromNode = nodes[line.fromId];
         const toNode = nodes[line.toId];
         
@@ -2108,6 +2155,8 @@ function renderConnectors() {
         
         const pathD = getLinePathD(line, fromCoords, toCoords);
         const isStandalone = isStandaloneLineShape(line);
+        const targetSvg = (Number(line.zIndex) || 0) >= 0 ? svgOverlayFront : svgOverlayBack;
+        const markerSuffix = targetSvg === svgOverlayBack ? "back" : "front";
         
         // Draw physical line path
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -2148,13 +2197,13 @@ function renderConnectors() {
         // Arrows
         const isSel = isLineSelected;
         if (line.hasArrow === "end" || line.hasArrow === "both") {
-            path.setAttribute("marker-end", isSel ? "url(#arrow-end-selected)" : "url(#arrow-end)");
+            path.setAttribute("marker-end", isSel ? `url(#arrow-end-selected-${markerSuffix})` : `url(#arrow-end-${markerSuffix})`);
         }
         if (line.hasArrow === "start" || line.hasArrow === "both") {
-            path.setAttribute("marker-start", isSel ? "url(#arrow-start-selected)" : "url(#arrow-start)");
+            path.setAttribute("marker-start", isSel ? `url(#arrow-start-selected-${markerSuffix})` : `url(#arrow-start-${markerSuffix})`);
         }
         
-        svgOverlay.appendChild(path);
+        targetSvg.appendChild(path);
         
         // Draw click trigger overlay path
         const overlay = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -2181,7 +2230,7 @@ function renderConnectors() {
                 beginLineRouteDrag(line, e, fromCoords, toCoords);
             }
         });
-        svgOverlay.appendChild(overlay);
+        (svgOverlayHit || targetSvg).appendChild(overlay);
 
         const activeLineIds = getActiveSelectedLineIds();
         const isSingleSelectedLine = selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id;
@@ -2296,7 +2345,7 @@ function renderConnectors() {
                 e.stopPropagation();
                 beginLineEndDrag("from");
             });
-            svgOverlay.appendChild(fromHit);
+            (svgOverlayHit || targetSvg).appendChild(fromHit);
 
             const toHit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
             toHit.setAttribute("cx", toCoords.x);
@@ -2308,7 +2357,7 @@ function renderConnectors() {
                 e.stopPropagation();
                 beginLineEndDrag("to");
             });
-            svgOverlay.appendChild(toHit);
+            (svgOverlayHit || targetSvg).appendChild(toHit);
         }
     });
 
@@ -2329,8 +2378,8 @@ function renderConnectors() {
         const previewPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
         previewPath.setAttribute("d", pathD);
         previewPath.setAttribute("class", "connector-line preview");
-        previewPath.setAttribute("marker-end", "url(#arrow-end-selected)");
-        svgOverlay.appendChild(previewPath);
+        previewPath.setAttribute("marker-end", "url(#arrow-end-selected-front)");
+        (svgOverlayFront || svgOverlayBack).appendChild(previewPath);
     }
 
     renderNodeResizeHandles();
@@ -3197,18 +3246,12 @@ function bringToFront() {
     if (selectedType === "line") {
         const lineIds = getActiveSelectedLineIds();
         if (lineIds.length === 0) return;
-        if (lineIds.length === 1) {
-            const lineIndex = lines.findIndex(l => l.id === selectedId);
-            if (lineIndex === -1 || lineIndex === lines.length - 1) return;
-            const [line] = lines.splice(lineIndex, 1);
-            lines.push(line);
-        } else {
-            const selectedSet = new Set(lineIds);
-            const selectedLines = lines.filter((l) => selectedSet.has(l.id));
-            const unselectedLines = lines.filter((l) => !selectedSet.has(l.id));
-            if (selectedLines.length === 0) return;
-            lines = [...unselectedLines, ...selectedLines];
-        }
+        const selectedSet = new Set(lineIds);
+        const selectedLines = lines.filter((line) => selectedSet.has(line.id));
+        if (selectedLines.length === 0) return;
+        selectedLines.forEach((line) => {
+            line.zIndex = getNextFrontLineZIndex();
+        });
         saveHistory();
         saveAutosave();
         render();
@@ -3241,18 +3284,12 @@ function sendToBack() {
     if (selectedType === "line") {
         const lineIds = getActiveSelectedLineIds();
         if (lineIds.length === 0) return;
-        if (lineIds.length === 1) {
-            const lineIndex = lines.findIndex(l => l.id === selectedId);
-            if (lineIndex <= 0) return;
-            const [line] = lines.splice(lineIndex, 1);
-            lines.unshift(line);
-        } else {
-            const selectedSet = new Set(lineIds);
-            const selectedLines = lines.filter((l) => selectedSet.has(l.id));
-            const unselectedLines = lines.filter((l) => !selectedSet.has(l.id));
-            if (selectedLines.length === 0) return;
-            lines = [...selectedLines, ...unselectedLines];
-        }
+        const selectedSet = new Set(lineIds);
+        const selectedLines = lines.filter((line) => selectedSet.has(line.id));
+        if (selectedLines.length === 0) return;
+        selectedLines.forEach((line) => {
+            line.zIndex = getNextBackLineZIndex();
+        });
         saveHistory();
         saveAutosave();
         render();
@@ -3971,7 +4008,7 @@ async function loadImageLibraryFromDrive() {
 
         const data = JSON.parse(await response.text());
         if (!isImageLibraryDrivePayload(data)) {
-            throw new Error("Drive file is not a valid FlowChart image library.");
+            throw new Error("Drive file is not a valid FlowCraft image library.");
         }
 
         const entries = Array.isArray(data.images) ? data.images : [];
@@ -4047,7 +4084,10 @@ function loadSessionData(data) {
     copiedElement = null;
 
     nodes = data.nodes || {};
-    lines = data.lines || [];
+    lines = (data.lines || []).map((line, index) => ({
+        ...line,
+        zIndex: Number.isFinite(Number(line?.zIndex)) ? Number(line.zIndex) : (index % 2 === 0 ? -1 : 1)
+    }));
     currentDocName = data.name || "Untitled Flowchart";
     docTitle.textContent = currentDocName;
     render();
@@ -4716,7 +4756,7 @@ async function importJsonFile(e) {
         const normalized = normalizeImportedData(data);
         if (!normalized) {
             const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
-            alert("Invalid format: could not detect FlowChart/Lucidchart node data. Top-level keys: " + topKeys);
+            alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
             return;
         }
 
@@ -5172,7 +5212,7 @@ async function loadGoogleDriveFile(fileId) {
             saveStatus.textContent = "Cloud saved";
             alert(`Flowchart "${normalized.data.name}" successfully loaded from Google Drive!`);
         } else {
-            alert("File exists but does not match a supported FlowChart/Lucidchart JSON format.");
+            alert("File exists but does not match a supported FlowCraft/Lucidchart JSON format.");
             saveStatus.textContent = "Load failed";
         }
     } catch(err) {

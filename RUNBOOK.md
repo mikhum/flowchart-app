@@ -1,11 +1,11 @@
-# Runbook — FlowChart
+# Runbook — flowchart-app
 
 **Repository:** `mikhum/flowchart-app`  
 **Last Updated:** July 9, 2026
 
 ## 1) Purpose
 
-This runbook is the quick operational playbook for production incidents and routine checks for FlowChart.
+This runbook is the quick operational playbook for production incidents and routine checks for `flowchart-app`.
 
 ---
 

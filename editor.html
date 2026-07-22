@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlowChart Editor</title>
+    <title>FlowCraft Editor</title>
     <!-- Google Fonts: Outfit and Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,7 +25,7 @@
             <div class="sidebar-header">
                 <div class="logo">
                     <i class="fa-solid fa-project-diagram brand-icon"></i>
-                    <h1>FlowChart</h1>
+                    <h1>FlowCraft</h1>
                 </div>
                 <button class="toggle-sidebar-btn" id="hide-sidebar" title="Hide Sidebar">
                     <i class="fa-solid fa-chevron-left"></i>
@@ -229,15 +229,27 @@
 
             <!-- Infinite Canvas viewport -->
             <div class="canvas" id="canvas">
-                <!-- SVG Canvas for Lines -->
-                <svg class="svg-connector-overlay" id="svg-overlay">
+                <!-- SVG Canvas for Lines (back layer) -->
+                <svg class="svg-connector-overlay svg-connector-back" id="svg-overlay-back">
                     <defs>
                         <!-- Normal Arrow Marker -->
-                        <marker id="arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <marker id="arrow-end-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                             <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
                         </marker>
                         <!-- Selected Arrow Marker -->
-                        <marker id="arrow-end-selected" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <marker id="arrow-end-selected-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
+                        </marker>
+                    </defs>
+                </svg>
+
+                <!-- SVG Canvas for Lines (front layer) -->
+                <svg class="svg-connector-overlay svg-connector-front" id="svg-overlay-front">
+                    <defs>
+                        <marker id="arrow-end-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
+                        </marker>
+                        <marker id="arrow-end-selected-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                             <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
                         </marker>
                     </defs>
@@ -248,6 +260,9 @@
 
                 <!-- Drag-to-select marquee box -->
                 <div class="marquee-selection-box" id="marquee-selection-box" style="display: none;"></div>
+
+                <!-- Invisible hit layer for lines -->
+                <svg class="svg-connector-overlay svg-connector-hit" id="svg-overlay-hit" aria-hidden="true"></svg>
 
                 <!-- Dedicated line endpoint handles layer -->
                 <div class="line-handles-layer" id="line-handles-layer"></div>

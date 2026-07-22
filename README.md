@@ -1,6 +1,6 @@
-# FlowChart
+# FlowCraft
 
-FlowChart is a browser-based flowchart and infrastructure diagram editor built with vanilla HTML, CSS, and JavaScript.
+FlowCraft is a browser-based flowchart and infrastructure diagram editor built with vanilla HTML, CSS, and JavaScript.
 
 It supports drag-and-drop shape creation, connector routing, local saves, Google Drive sync, and document export.
 
@@ -13,8 +13,8 @@ It supports drag-and-drop shape creation, connector routing, local saves, Google
 - Text editing and positioning inside shapes
 - Local workspace save/load in browser storage
 - Google Drive open/save/trash support (OAuth)
-- Export to PDF, Word (.docx), and FlowChart JSON
-- Import from FlowChart JSON, Lucidchart-like JSON (best effort), and VSDX (best effort)
+- Export to PDF, Word (.docx), and FlowCraft JSON
+- Import from FlowCraft JSON, Lucidchart-like JSON (best effort), and VSDX (best effort)
 - Build badge support via generated build metadata
 
 ## Tech Stack
@@ -73,7 +73,7 @@ npm.cmd run dev
 
 ## OAuth and Google Drive Setup
 
-FlowChart is a frontend app. Keep only the OAuth Client ID in config, never secrets.
+FlowCraft is a frontend app. Keep only the OAuth Client ID in config, never secrets.
 
 1. Edit `app-config.js`:
 

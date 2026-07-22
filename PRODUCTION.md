@@ -7,7 +7,7 @@
 
 ## 1) Purpose
 
-This document describes the production setup for `flowchart-app` / FlowChart, including:
+This document describes the production setup for `flowchart-app`, including:
 
 - Hosting and deployment
 - Data storage model
@@ -20,7 +20,7 @@ The goal is to make future maintenance and recovery straightforward.
 
 ## 2) Production Overview
 
-FlowChart is a static web application for creating and editing flowcharts.
+`flowchart-app` is a static web application for creating and editing flowcharts.
 
 ### Runtime architecture
 
