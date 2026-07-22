@@ -1,4 +1,4 @@
-// FlowCraft - Core Flowchart & Infrastructure Engine
+// FlowChart - Core Flowchart & Infrastructure Engine
 const APP_BUILD = "login-separated";
 const BUILD_INFO_PATH = "build-info.json";
 const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
@@ -118,7 +118,7 @@ const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
 
 function logStartup(message) {
     if (!startupDebugEnabled) return;
-    console.info("[FlowCraft startup]", message);
+    console.info("[FlowChart startup]", message);
 }
 
 function showStartupDebugStatus(pathLabel) {
@@ -374,13 +374,13 @@ async function updateBuildBadge() {
         if (!shortSha) return;
 
         setBuildBadgeLabel(`Commit ${shortSha}`);
-        console.info("FlowCraft build:", shortSha);
+        console.info("FlowChart build:", shortSha);
         return;
     } catch (err) {
         console.warn("Unable to load build metadata.", err);
     }
 
-    console.info("FlowCraft build:", APP_BUILD);
+    console.info("FlowChart build:", APP_BUILD);
 }
 
 // --- Drive Session Hydration (from login page handoff) ---
@@ -3971,7 +3971,7 @@ async function loadImageLibraryFromDrive() {
 
         const data = JSON.parse(await response.text());
         if (!isImageLibraryDrivePayload(data)) {
-            throw new Error("Drive file is not a valid FlowCraft image library.");
+            throw new Error("Drive file is not a valid FlowChart image library.");
         }
 
         const entries = Array.isArray(data.images) ? data.images : [];
@@ -4716,7 +4716,7 @@ async function importJsonFile(e) {
         const normalized = normalizeImportedData(data);
         if (!normalized) {
             const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
-            alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
+            alert("Invalid format: could not detect FlowChart/Lucidchart node data. Top-level keys: " + topKeys);
             return;
         }
 
@@ -5172,7 +5172,7 @@ async function loadGoogleDriveFile(fileId) {
             saveStatus.textContent = "Cloud saved";
             alert(`Flowchart "${normalized.data.name}" successfully loaded from Google Drive!`);
         } else {
-            alert("File exists but does not match a supported FlowCraft/Lucidchart JSON format.");
+            alert("File exists but does not match a supported FlowChart/Lucidchart JSON format.");
             saveStatus.textContent = "Load failed";
         }
     } catch(err) {
