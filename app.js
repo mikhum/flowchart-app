@@ -62,6 +62,12 @@ let lineDragStartFrom = {};
 let lineDragStartTo = {};
 let lineDragStartWaypoint = {};
 let lineDragMoved = false;
+let draggingLineLabelId = null;
+let lineLabelDragStartMouse = { x: 0, y: 0 };
+let lineLabelDragStartOffset = { x: 0, y: 0 };
+let lineLabelDragMoved = false;
+let lineLabelDragStarted = false;
+let editingLineLabelId = null;
 
 // Snap to grid
 let snapGridEnabled = true;
@@ -269,6 +275,12 @@ const ctrlResetView = document.getElementById("ctrl-reset-view");
 const ctrlHelp = document.getElementById("ctrl-help");
 const btnUndo = document.getElementById("btn-undo");
 const btnRedo = document.getElementById("btn-redo");
+const btnAlignLeft = document.getElementById("btn-align-left");
+const btnAlignCenterH = document.getElementById("btn-align-center-h");
+const btnAlignRight = document.getElementById("btn-align-right");
+const btnAlignTop = document.getElementById("btn-align-top");
+const btnAlignMiddleV = document.getElementById("btn-align-middle-v");
+const btnAlignBottom = document.getElementById("btn-align-bottom");
 const btnSnapGrid = document.getElementById("btn-snap-grid");
 const btnClearCanvas = document.getElementById("btn-clear-canvas");
 
@@ -324,6 +336,8 @@ const propLineType = document.getElementById("prop-line-type");
 const propLineStyle = document.getElementById("prop-line-style");
 const propLineWidth = document.getElementById("prop-line-width");
 const propLineArrows = document.getElementById("prop-line-arrows");
+const propLineText = document.getElementById("prop-line-text");
+const propLineTextSize = document.getElementById("prop-line-text-size");
 const btnSetDefaultLine = document.getElementById("btn-set-default-line");
 const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
 const btnLineBringFront = document.getElementById("btn-line-bring-front");
@@ -724,6 +738,12 @@ function setupEventListeners() {
     // Tool buttons
     btnUndo.addEventListener("click", undo);
     btnRedo.addEventListener("click", redo);
+    btnAlignLeft.addEventListener("click", () => alignSelectedNodes("left"));
+    btnAlignCenterH.addEventListener("click", () => alignSelectedNodes("center"));
+    btnAlignRight.addEventListener("click", () => alignSelectedNodes("right"));
+    btnAlignTop.addEventListener("click", () => alignSelectedNodes("top"));
+    btnAlignMiddleV.addEventListener("click", () => alignSelectedNodes("middle"));
+    btnAlignBottom.addEventListener("click", () => alignSelectedNodes("bottom"));
     btnSnapGrid.addEventListener("click", toggleSnapGrid);
     btnClearCanvas.addEventListener("click", handleClearCanvas);
     
@@ -774,6 +794,9 @@ function setupEventListeners() {
     propLineStyle.addEventListener("change", updateSelectedLineStyle);
     propLineWidth.addEventListener("change", updateSelectedLineThickness);
     propLineArrows.addEventListener("change", updateSelectedLineArrows);
+    propLineText.addEventListener("input", updateSelectedLineText);
+    propLineText.addEventListener("change", commitSelectedLineText);
+    propLineTextSize.addEventListener("change", updateSelectedLineTextSize);
     btnLineBringFront.addEventListener("click", bringToFront);
     btnLineSendBack.addEventListener("click", sendToBack);
     btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
@@ -954,6 +977,22 @@ function getActiveSelectedLineIds() {
     return selectedId ? [selectedId] : [];
 }
 
+function isStandaloneLineShape(line) {
+    if (!line) return false;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    return !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+}
+
+function getLineLabelOffset(line) {
+    const x = Number(line?.labelOffset?.x);
+    const y = Number(line?.labelOffset?.y);
+    return {
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : -18
+    };
+}
+
 function applyNodeSelection(nodeIds, options = {}) {
     const validNodeIds = Array.from(nodeIds).filter(nodeId => !!nodes[nodeId]);
     selectedNodeIds = new Set(validNodeIds);
@@ -1058,7 +1097,7 @@ function updateMarqueeSelection() {
 
 // --- Panning & Drag/Drop Pointer Handling ---
 function handleWorkspacePointerDown(e) {
-    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui")) {
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".topbar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-label")) {
         return;
     }
 
@@ -1094,7 +1133,7 @@ function handleWorkspaceContextMenu(e) {
 }
 
 function hasActivePointerInteraction() {
-    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingStandaloneLineId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
+    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingStandaloneLineId || !!draggingLineLabelId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
 }
 
 function handleGlobalPointerAbort() {
@@ -1148,6 +1187,31 @@ function handleGlobalPointerMove(e) {
         if (lineEndSnapTarget) {
             const portEl = document.querySelector(`#node-${lineEndSnapTarget.nodeId} .port-${lineEndSnapTarget.portName}`);
             if (portEl) portEl.classList.add("snapped");
+        }
+        renderConnectors();
+    } else if (draggingLineLabelId) {
+        const line = lines.find((l) => l.id === draggingLineLabelId);
+        if (!line) return;
+
+        const moveDistance = Math.hypot(e.clientX - lineLabelDragStartMouse.x, e.clientY - lineLabelDragStartMouse.y);
+        if (!lineLabelDragStarted && moveDistance < 4) {
+            return;
+        }
+        lineLabelDragStarted = true;
+
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const startCoords = screenToCanvas(lineLabelDragStartMouse.x, lineLabelDragStartMouse.y);
+        const dx = coords.x - startCoords.x;
+        const dy = coords.y - startCoords.y;
+
+        const nextOffset = {
+            x: Math.round(lineLabelDragStartOffset.x + dx),
+            y: Math.round(lineLabelDragStartOffset.y + dy)
+        };
+        const prevOffset = getLineLabelOffset(line);
+        line.labelOffset = nextOffset;
+        if (nextOffset.x !== prevOffset.x || nextOffset.y !== prevOffset.y) {
+            lineLabelDragMoved = true;
         }
         renderConnectors();
     } else if (draggingLineRouteId) {
@@ -1351,6 +1415,17 @@ function handleGlobalPointerUp(e) {
             saveAutosave();
         }
         renderConnectors();
+    } else if (draggingLineLabelId) {
+        const moved = lineLabelDragMoved;
+        draggingLineLabelId = null;
+        lineLabelDragMoved = false;
+        lineLabelDragStarted = false;
+        document.body.classList.remove("line-label-dragging");
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+            renderConnectors();
+        }
     } else if (draggingNodeId) {
         const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
             ? Array.from(selectedNodeIds)
@@ -1449,6 +1524,9 @@ function resetTransientInteractions() {
     lineEndSnapTarget = null;
     draggingLineRouteId = null;
     lineRouteDragStartWaypoint = null;
+    draggingLineLabelId = null;
+    lineLabelDragMoved = false;
+    lineLabelDragStarted = false;
     draggingStandaloneLineId = null;
     draggingStandaloneLineIds = [];
     lineDragStartFrom = {};
@@ -1456,7 +1534,7 @@ function resetTransientInteractions() {
     lineDragStartWaypoint = {};
     lineDragMoved = false;
     setMarqueeBoxVisibility(false);
-    document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging");
+    document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging", "line-label-dragging");
     document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
 }
 
@@ -1542,7 +1620,10 @@ function createStandaloneLineAt(x, y, glyphType = null) {
         color: defaultLineSettings.color,
         thickness: defaultLineSettings.thickness,
         hasArrow: glyphType ? "none" : defaultLineSettings.hasArrow,
-        glyphType: glyphType
+        glyphType: glyphType,
+        label: "",
+        labelSize: 14,
+        labelOffset: { x: 0, y: -18 }
     });
 
     saveHistory();
@@ -1662,7 +1743,10 @@ function createConnectorLine(fromId, fromPort, toId, toPort) {
         lineStyle: defaultLineSettings.lineStyle,
         color: defaultLineSettings.color,
         thickness: defaultLineSettings.thickness,
-        hasArrow: defaultLineSettings.hasArrow
+        hasArrow: defaultLineSettings.hasArrow,
+        label: "",
+        labelSize: 14,
+        labelOffset: { x: 0, y: -18 }
     });
     
     saveHistory();
@@ -2005,6 +2089,7 @@ function renderConnectors() {
         if (!fromCoords || !toCoords) return;
         
         const pathD = getLinePathD(line, fromCoords, toCoords);
+        const isStandalone = isStandaloneLineShape(line);
         
         // Draw physical line path
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -2021,9 +2106,6 @@ function renderConnectors() {
             const wasSelected = selectedId === line.id && selectedType === "line";
             const activeSelectedLineIds = getActiveSelectedLineIds();
             e.stopPropagation();
-            const fromNode = nodes[line.fromId];
-            const toNode = nodes[line.toId];
-            const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
             if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
                 e.preventDefault();
                 toggleStandaloneLineInNodeSelection(line);
@@ -2065,9 +2147,6 @@ function renderConnectors() {
             const wasSelected = selectedId === line.id && selectedType === "line";
             const activeSelectedLineIds = getActiveSelectedLineIds();
             e.stopPropagation();
-            const fromNode = nodes[line.fromId];
-            const toNode = nodes[line.toId];
-            const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
             if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
                 e.preventDefault();
                 toggleStandaloneLineInNodeSelection(line);
@@ -2087,6 +2166,48 @@ function renderConnectors() {
         svgOverlay.appendChild(overlay);
 
         const activeLineIds = getActiveSelectedLineIds();
+        const isSingleSelectedLine = selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id;
+        if (lineHandlesLayer) {
+            const hasLabel = typeof line.label === "string" && line.label.trim().length > 0;
+            if (hasLabel || isSingleSelectedLine) {
+                const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
+                const offset = getLineLabelOffset(line);
+                const labelEl = document.createElement("div");
+                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder");
+                labelEl.style.left = `${Math.round(anchor.x + offset.x)}px`;
+                labelEl.style.top = `${Math.round(anchor.y + offset.y)}px`;
+                labelEl.style.fontSize = `${Math.max(10, Number(line.labelSize) || 14)}px`;
+                labelEl.textContent = hasLabel ? line.label : "Line text";
+                labelEl.title = hasLabel ? "Click to edit. Shift+drag to move line text" : "Add text in properties, then click to edit or Shift+drag to move";
+                labelEl.addEventListener("pointerdown", (e) => {
+                    if (editingLineLabelId === line.id) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (!(selectedType === "line" && selectedId === line.id)) {
+                        selectedId = line.id;
+                        selectedType = "line";
+                        selectedNodeIds = new Set();
+                        document.body.classList.add("line-edit-mode");
+                        updatePropertiesPanel();
+                    }
+
+                    if (e.shiftKey) {
+                        draggingLineLabelId = line.id;
+                        lineLabelDragMoved = false;
+                        lineLabelDragStarted = false;
+                        lineLabelDragStartMouse = { x: e.clientX, y: e.clientY };
+                        lineLabelDragStartOffset = getLineLabelOffset(line);
+                        document.body.classList.add("line-label-dragging");
+                        return;
+                    }
+
+                    startLineLabelEdit(line.id, labelEl);
+                });
+                lineHandlesLayer.appendChild(labelEl);
+            }
+        }
+
         if (selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id && lineHandlesLayer) {
             const routePoint = getLineRouteHandlePoint(line, fromCoords, toCoords);
             const routeHandle = document.createElement("div");
@@ -2120,6 +2241,7 @@ function renderConnectors() {
                 lineEndSnapTarget = null;
                 lineEndDragMoved = false;
                 draggingStandaloneLineId = null;
+                draggingLineLabelId = null;
                 document.body.classList.add("line-end-dragging");
             };
 
@@ -2517,6 +2639,63 @@ function startTextEdit(nodeId) {
     }, { once: true });
 }
 
+function startLineLabelEdit(lineId, labelEl) {
+    const line = lines.find((l) => l.id === lineId);
+    if (!line || !labelEl) return;
+
+    editingLineLabelId = lineId;
+    draggingLineLabelId = null;
+    lineLabelDragMoved = false;
+    lineLabelDragStarted = false;
+    document.body.classList.remove("line-label-dragging");
+
+    const originalText = String(line.label || "");
+    labelEl.contentEditable = "true";
+    labelEl.classList.add("line-label-editor");
+    labelEl.classList.remove("placeholder");
+    labelEl.textContent = originalText;
+    labelEl.focus();
+    document.execCommand("selectAll", false, null);
+
+    const finishEdit = (cancel = false) => {
+        if (editingLineLabelId !== lineId) return;
+
+        editingLineLabelId = null;
+        labelEl.contentEditable = "false";
+        labelEl.classList.remove("line-label-editor");
+
+        if (cancel) {
+            line.label = originalText;
+            updatePropertiesPanel();
+            renderConnectors();
+            return;
+        }
+
+        const nextText = labelEl.textContent || "";
+        if (line.label !== nextText) {
+            line.label = nextText;
+            saveHistory();
+            saveAutosave();
+        }
+        updatePropertiesPanel();
+        renderConnectors();
+    };
+
+    labelEl.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            labelEl.blur();
+        }
+        if (e.key === "Escape") {
+            e.preventDefault();
+            finishEdit(true);
+        }
+    };
+
+    labelEl.onblur = () => finishEdit(false);
+}
+
 // --- Selection & Properties Update ---
 function selectElement(id, type = null, options = {}) {
 
@@ -2625,6 +2804,8 @@ function updatePropertiesPanel() {
             propLineStyle.value = line.lineStyle;
             propLineWidth.value = line.thickness;
             propLineArrows.value = line.hasArrow;
+            propLineText.value = line.label || "";
+            propLineTextSize.value = String(Math.max(10, Number(line.labelSize) || 14));
             
             document.querySelectorAll("#prop-linecolor-grid .color-swatch").forEach(s => {
                 s.classList.toggle("selected", s.dataset.color === line.color);
@@ -2831,6 +3012,55 @@ function updateSelectedLineArrows() {
         saveHistory();
         render();
     }
+}
+
+function updateSelectedLineText() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        line.label = propLineText.value;
+    });
+    renderConnectors();
+}
+
+function commitSelectedLineText() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    let hasSelection = false;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        hasSelection = true;
+        line.label = propLineText.value;
+    });
+    if (!hasSelection) return;
+    saveHistory();
+    saveAutosave();
+    renderConnectors();
+}
+
+function updateSelectedLineTextSize() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    const size = Math.max(10, parseInt(propLineTextSize.value, 10) || 14);
+    let changed = false;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        if ((Number(line.labelSize) || 14) !== size) {
+            line.labelSize = size;
+            changed = true;
+        }
+    });
+    if (!changed) return;
+    saveHistory();
+    saveAutosave();
+    renderConnectors();
 }
 
 function setSelectedLineAsDefault() {
@@ -3169,6 +3399,73 @@ function nudgeSelectedStandaloneLineBy(dx, dy) {
     return true;
 }
 
+function alignSelectedNodes(mode) {
+    if (selectedType !== "node" || selectedNodeIds.size < 2) return false;
+
+    const selectedNodes = Array.from(selectedNodeIds)
+        .map((nodeId) => nodes[nodeId])
+        .filter((node) => !!node);
+
+    if (selectedNodes.length < 2) return false;
+
+    const rects = selectedNodes.map((node) => {
+        const width = Number.isFinite(Number(node.width)) ? Number(node.width) : 120;
+        const height = Number.isFinite(Number(node.height)) ? Number(node.height) : 60;
+        const x = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
+        const y = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
+        return {
+            left: x - width / 2,
+            right: x + width / 2,
+            top: y - height / 2,
+            bottom: y + height / 2,
+            width,
+            height
+        };
+    });
+
+    const bounds = rects.reduce((acc, rect) => {
+        acc.left = Math.min(acc.left, rect.left);
+        acc.right = Math.max(acc.right, rect.right);
+        acc.top = Math.min(acc.top, rect.top);
+        acc.bottom = Math.max(acc.bottom, rect.bottom);
+        return acc;
+    }, { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
+
+    const centerX = (bounds.left + bounds.right) / 2;
+    const centerY = (bounds.top + bounds.bottom) / 2;
+    let hasChanges = false;
+
+    selectedNodes.forEach((node, index) => {
+        const rect = rects[index];
+        let nextX = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
+        let nextY = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
+
+        if (mode === "left") nextX = bounds.left + rect.width / 2;
+        else if (mode === "center") nextX = centerX;
+        else if (mode === "right") nextX = bounds.right - rect.width / 2;
+        else if (mode === "top") nextY = bounds.top + rect.height / 2;
+        else if (mode === "middle") nextY = centerY;
+        else if (mode === "bottom") nextY = bounds.bottom - rect.height / 2;
+
+        const snappedX = snap(nextX);
+        const snappedY = snap(nextY);
+
+        if (node.x !== snappedX || node.y !== snappedY) {
+            node.x = snappedX;
+            node.y = snappedY;
+            hasChanges = true;
+        }
+    });
+
+    if (!hasChanges) return false;
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
 // --- Keyboard Handling ---
 function handleKeyDown(e) {
     // Disable shortcuts if writing text or in modals
@@ -3177,6 +3474,21 @@ function handleKeyDown(e) {
     }
 
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    if (isCtrlOrCmd && e.shiftKey) {
+        let alignMode = null;
+        if (e.key === "ArrowLeft") alignMode = "left";
+        else if (e.key === "ArrowRight") alignMode = "right";
+        else if (e.key === "ArrowUp") alignMode = "top";
+        else if (e.key === "ArrowDown") alignMode = "bottom";
+        else if (e.key === "h" || e.key === "H") alignMode = "center";
+        else if (e.key === "v" || e.key === "V") alignMode = "middle";
+
+        if (alignMode && alignSelectedNodes(alignMode)) {
+            e.preventDefault();
+            return;
+        }
+    }
 
     const arrowNudges = {
         ArrowLeft: { dx: -1, dy: 0 },

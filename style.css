@@ -653,6 +653,11 @@ body, html {
     transition: all var(--transition-fast);
 }
 
+.topbar-btn.align-btn {
+    width: 28px;
+    font-size: 0.75rem;
+}
+
 .topbar-btn:hover {
     background-color: #f1f5f9;
     color: var(--text-main);
@@ -793,6 +798,48 @@ body.line-end-dragging .connector-line-overlay {
 }
 
 body.line-route-dragging .line-route-handle {
+    cursor: grabbing;
+}
+
+.line-label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    max-width: 220px;
+    padding: 3px 7px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(100, 116, 139, 0.55);
+    color: #0f172a;
+    font-weight: 600;
+    line-height: 1.25;
+    text-align: center;
+    white-space: pre-wrap;
+    word-break: break-word;
+    box-shadow: var(--shadow-sm);
+    cursor: move;
+    pointer-events: auto;
+    user-select: none;
+}
+
+.line-label.placeholder {
+    color: #64748b;
+    font-weight: 500;
+    border-style: dashed;
+    opacity: 0.9;
+}
+
+.line-label.selected {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.18);
+}
+
+.line-label-editor {
+    outline: 2px solid rgba(14, 165, 233, 0.35);
+    cursor: text;
+    user-select: text;
+}
+
+body.line-label-dragging .line-label {
     cursor: grabbing;
 }
 

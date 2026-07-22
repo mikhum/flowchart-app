@@ -169,7 +169,7 @@
             <div class="sidebar-footer">
                 <div class="theme-info">
                     <i class="fa-solid fa-circle-question"></i>
-                    <span>Drag node to move. Alt+drag text to reposition label. Double click or F2 to edit text.</span>
+                    <span>Drag node to move. Alt+drag node text to reposition label. Double click or F2 to edit shape text. For line labels: click to edit, Shift+drag to move.</span>
                 </div>
             </div>
         </aside>
@@ -191,6 +191,13 @@
                 <div class="topbar-actions">
                     <button class="topbar-btn" id="btn-undo" title="Undo (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
                     <button class="topbar-btn" id="btn-redo" title="Redo (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
+                    <div class="topbar-divider"></div>
+                    <button class="topbar-btn align-btn" id="btn-align-left" title="Align Left (Ctrl+Shift+Left)"><i class="fa-solid fa-align-left"></i></button>
+                    <button class="topbar-btn align-btn" id="btn-align-center-h" title="Align Center Horizontally (Ctrl+Shift+H)"><i class="fa-solid fa-align-center"></i></button>
+                    <button class="topbar-btn align-btn" id="btn-align-right" title="Align Right (Ctrl+Shift+Right)"><i class="fa-solid fa-align-right"></i></button>
+                    <button class="topbar-btn align-btn" id="btn-align-top" title="Align Top (Ctrl+Shift+Up)"><i class="fa-solid fa-arrow-up"></i></button>
+                    <button class="topbar-btn align-btn" id="btn-align-middle-v" title="Align Middle Vertically (Ctrl+Shift+V)"><i class="fa-solid fa-arrows-up-down"></i></button>
+                    <button class="topbar-btn align-btn" id="btn-align-bottom" title="Align Bottom (Ctrl+Shift+Down)"><i class="fa-solid fa-arrow-down"></i></button>
                     <div class="topbar-divider"></div>
                     <button class="topbar-btn" id="btn-snap-grid" title="Toggle Snap to Grid"><i class="fa-solid fa-grid-3"></i></button>
                     <button class="topbar-btn" id="btn-clear-canvas" title="Clear Canvas"><i class="fa-solid fa-trash-can"></i></button>
@@ -345,6 +352,21 @@
                     </div>
                     
                     <div id="prop-line-section" style="display: none;">
+                        <div class="prop-group">
+                            <label>Line Text</label>
+                            <textarea id="prop-line-text" rows="2" placeholder="Add text for selected line"></textarea>
+                        </div>
+                        <div class="prop-group">
+                            <label>Line Text Size</label>
+                            <select id="prop-line-text-size">
+                                <option value="10">10px</option>
+                                <option value="12">12px</option>
+                                <option value="14" selected>14px</option>
+                                <option value="16">16px</option>
+                                <option value="18">18px</option>
+                                <option value="20">20px</option>
+                            </select>
+                        </div>
                         <div class="prop-group">
                             <label>Line Routing</label>
                             <select id="prop-line-type">
