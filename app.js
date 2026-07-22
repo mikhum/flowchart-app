@@ -77,6 +77,7 @@ const GRID_SIZE = 20;
 let currentDocName = "Untitled Flowchart";
 let currentLocalSaveName = "";
 let currentDriveFileId = null; // Google Drive File ID
+let currentImageLibraryDriveFileId = "";
 let jsonExportFileHandle = null;
 const DRIVE_AUTOSAVE_INTERVAL_MS = 15000;
 let driveAutosaveTimer = null;
@@ -220,6 +221,10 @@ const DEFAULT_LINE_SETTINGS = {
     hasArrow: "end"
 };
 let defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+const IMAGE_LIBRARY_STORAGE_KEY = "flowcraft_image_library";
+const MAX_IMAGE_LIBRARY_ITEMS = 80;
+const IMAGE_LIBRARY_DRIVE_FILE_ID_KEY = "flowcraft_image_library_drive_file_id";
+const IMAGE_LIBRARY_DRIVE_FILENAME = "flowcraft-image-library.json";
 
 function resolveCssColorVar(varName, fallback) {
     const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
@@ -294,6 +299,12 @@ const fileImportInput = document.getElementById("file-import-input");
 const btnNewFlowchart = document.getElementById("btn-new-flowchart");
 const btnSaveLocal = document.getElementById("btn-save-local");
 const localFilesList = document.getElementById("local-files-list");
+const btnSaveSelectedImageLibrary = document.getElementById("btn-save-selected-image-library");
+const btnAddImageLibraryFile = document.getElementById("btn-add-image-library-file");
+const btnSaveImageLibraryDrive = document.getElementById("btn-save-image-library-drive");
+const btnLoadImageLibraryDrive = document.getElementById("btn-load-image-library-drive");
+const imageLibraryFileInput = document.getElementById("image-library-file-input");
+const imageLibraryList = document.getElementById("image-library-list");
 
 // Modals
 const helpModal = document.getElementById("help-modal");
@@ -434,6 +445,7 @@ function consumeEditorMode() {
 }
 
 function init() {
+    currentImageLibraryDriveFileId = String(localStorage.getItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY) || "");
     updateBuildBadge();
     updateGoogleConfigUiState();
     hydrateDriveSession();
@@ -441,6 +453,7 @@ function init() {
     setupEventListeners();
     updateGoogleSecurityState();
     setupColorPickers();
+    loadImageLibraryList();
     loadLocalFilesList();
 
     // Set snap grid button state
@@ -750,6 +763,11 @@ function setupEventListeners() {
     // Local workspace manager
     btnNewFlowchart.addEventListener("click", handleNewFlowchart);
     btnSaveLocal.addEventListener("click", handleSaveLocal);
+    btnSaveSelectedImageLibrary.addEventListener("click", saveSelectedImageToLibrary);
+    btnAddImageLibraryFile.addEventListener("click", () => imageLibraryFileInput.click());
+    btnSaveImageLibraryDrive.addEventListener("click", () => saveImageLibraryToDrive({ silent: false }));
+    btnLoadImageLibraryDrive.addEventListener("click", loadImageLibraryFromDrive);
+    imageLibraryFileInput.addEventListener("change", handleImageLibraryFilePick);
     
     // Document Exports
     btnExportPDF.addEventListener("click", exportToPDF);
@@ -3646,6 +3664,339 @@ function addNewImageNode(base64, naturalWidth = 0, naturalHeight = 0) {
     selectElement(id, "node");
 }
 
+function getImageLibraryEntries() {
+    try {
+        const raw = localStorage.getItem(IMAGE_LIBRARY_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter((entry) => entry && typeof entry.imageUrl === "string" && entry.imageUrl.trim())
+            .map((entry) => ({
+                id: String(entry.id || ""),
+                name: String(entry.name || "Image"),
+                imageUrl: String(entry.imageUrl || ""),
+                updatedAt: Number(entry.updatedAt) || Date.now()
+            }));
+    } catch (err) {
+        return [];
+    }
+}
+
+function saveImageLibraryEntries(entries) {
+    localStorage.setItem(IMAGE_LIBRARY_STORAGE_KEY, JSON.stringify(entries));
+}
+
+function sanitizeImageLibraryName(name, fallback = "Image") {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return fallback;
+    return trimmed.slice(0, 80);
+}
+
+function upsertImageLibraryEntry(imageUrl, name) {
+    const src = String(imageUrl || "").trim();
+    if (!src) return false;
+
+    const now = Date.now();
+    const entries = getImageLibraryEntries();
+    const existing = entries.find((entry) => entry.imageUrl === src);
+    if (existing) {
+        existing.name = sanitizeImageLibraryName(name, existing.name || "Image");
+        existing.updatedAt = now;
+    } else {
+        entries.push({
+            id: `imglib_${now}_${Math.floor(Math.random() * 1000)}`,
+            name: sanitizeImageLibraryName(name, "Image"),
+            imageUrl: src,
+            updatedAt: now
+        });
+    }
+
+    entries.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    const trimmed = entries.slice(0, MAX_IMAGE_LIBRARY_ITEMS);
+    saveImageLibraryEntries(trimmed);
+    loadImageLibraryList();
+    return true;
+}
+
+function saveSelectedImageToLibrary() {
+    if (selectedType !== "node" || selectedNodeIds.size !== 1) {
+        alert("Select exactly one image node first.");
+        return;
+    }
+
+    const selectedNodeId = selectedId && selectedNodeIds.has(selectedId)
+        ? selectedId
+        : Array.from(selectedNodeIds)[0];
+    const node = nodes[selectedNodeId];
+    if (!node || node.type !== "image" || !node.imageUrl) {
+        alert("The selected node is not an image.");
+        return;
+    }
+
+    const suggestedName = sanitizeImageLibraryName(currentDocName ? `${currentDocName} image` : "Image", "Image");
+    const name = prompt("Name this image for your library:", suggestedName);
+    if (name === null) return;
+
+    const saved = upsertImageLibraryEntry(node.imageUrl, name);
+    if (!saved) {
+        alert("Could not save image to library.");
+        return;
+    }
+    saveStatus.textContent = "Image saved to library";
+}
+
+function handleImageLibraryFilePick(e) {
+    const file = (e.target.files && e.target.files[0]) || null;
+    if (!file) return;
+
+    if (!String(file.type || "").startsWith("image/")) {
+        alert("Please choose an image file.");
+        e.target.value = "";
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        const dataUrl = String(evt.target && evt.target.result ? evt.target.result : "");
+        const baseName = sanitizeImageLibraryName(file.name.replace(/\.[^/.]+$/, ""), "Image");
+        if (upsertImageLibraryEntry(dataUrl, baseName)) {
+            saveStatus.textContent = "Image added to library";
+        }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+}
+
+function insertImageFromLibraryEntry(entry) {
+    if (!entry || !entry.imageUrl) return;
+
+    loadImageElement(entry.imageUrl).then((img) => {
+        if (img) {
+            addNewImageNode(entry.imageUrl, img.naturalWidth, img.naturalHeight);
+        } else {
+            addNewImageNode(entry.imageUrl);
+        }
+        saveStatus.textContent = "Image inserted from library";
+    });
+}
+
+function deleteImageLibraryEntry(id, e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const entries = getImageLibraryEntries();
+    const next = entries.filter((entry) => entry.id !== id);
+    saveImageLibraryEntries(next);
+    loadImageLibraryList();
+}
+
+function loadImageLibraryList() {
+    if (!imageLibraryList) return;
+
+    const entries = getImageLibraryEntries().sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    imageLibraryList.innerHTML = "";
+
+    if (entries.length === 0) {
+        imageLibraryList.innerHTML = '<div class="empty-state">No saved images.</div>';
+        return;
+    }
+
+    entries.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "image-library-item";
+        item.title = `Insert ${entry.name}`;
+        item.addEventListener("click", () => insertImageFromLibraryEntry(entry));
+
+        const thumb = document.createElement("img");
+        thumb.className = "image-library-thumb";
+        thumb.src = entry.imageUrl;
+        thumb.alt = entry.name;
+
+        const name = document.createElement("span");
+        name.className = "image-library-name";
+        name.textContent = entry.name;
+
+        const actions = document.createElement("div");
+        actions.className = "map-actions";
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "map-action-btn delete";
+        deleteBtn.title = "Remove from image library";
+        deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        deleteBtn.addEventListener("click", (e) => deleteImageLibraryEntry(entry.id, e));
+
+        actions.appendChild(deleteBtn);
+        item.appendChild(thumb);
+        item.appendChild(name);
+        item.appendChild(actions);
+        imageLibraryList.appendChild(item);
+    });
+}
+
+function getImageLibraryDrivePayload() {
+    return {
+        format: "flowcraft-image-library",
+        version: "1.0",
+        updatedAt: Date.now(),
+        images: getImageLibraryEntries()
+    };
+}
+
+function isImageLibraryDrivePayload(data) {
+    return !!data && typeof data === "object" && data.format === "flowcraft-image-library" && Array.isArray(data.images);
+}
+
+async function findImageLibraryDriveFileId() {
+    if (!accessToken) return "";
+
+    const query = `name='${IMAGE_LIBRARY_DRIVE_FILENAME}' and mimeType='application/json' and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name,modifiedTime)`;
+    const response = await fetch(url, {
+        headers: {
+            "Authorization": `Bearer ${accessToken}`
+        }
+    });
+    if (!response.ok) throw new Error("Could not search Drive image library (HTTP " + response.status + ")");
+
+    const data = await response.json();
+    const file = Array.isArray(data.files) && data.files.length > 0 ? data.files[0] : null;
+    return file && file.id ? String(file.id) : "";
+}
+
+async function saveImageLibraryToDrive(options = {}) {
+    const silent = !!options.silent;
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+
+    const payload = getImageLibraryDrivePayload();
+    const content = JSON.stringify(payload, null, 2);
+
+    if (!silent) saveStatus.textContent = "Saving image library to Drive...";
+
+    try {
+        let driveFileId = currentImageLibraryDriveFileId;
+        if (!driveFileId) {
+            driveFileId = await findImageLibraryDriveFileId();
+        }
+
+        const metadata = {
+            name: IMAGE_LIBRARY_DRIVE_FILENAME,
+            mimeType: "application/json"
+        };
+
+        const boundary = "flowcraft_image_library_boundary";
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const closeDelim = "\r\n--" + boundary + "--";
+
+        let url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+        let method = "POST";
+        if (driveFileId) {
+            url = `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=multipart`;
+            method = "PATCH";
+        }
+
+        const requestBody =
+            delimiter +
+            "Content-Type: application/json\r\n\r\n" +
+            JSON.stringify(metadata) +
+            delimiter +
+            "Content-Type: application/json\r\n\r\n" +
+            content +
+            closeDelim;
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": `multipart/related; boundary=${boundary}`
+            },
+            body: requestBody
+        });
+
+        if (!response.ok) throw new Error("Drive upload failed (HTTP " + response.status + ")");
+
+        const file = await response.json();
+        currentImageLibraryDriveFileId = String(file.id || "");
+        if (currentImageLibraryDriveFileId) {
+            localStorage.setItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY, currentImageLibraryDriveFileId);
+        }
+
+        if (!silent) saveStatus.textContent = "Image library saved to Drive";
+    } catch (err) {
+        if (!silent) {
+            saveStatus.textContent = "Image library save failed";
+            alert("Could not save image library to Drive: " + err.message);
+        } else {
+            console.warn("Image library Drive save failed:", err);
+        }
+    }
+}
+
+async function loadImageLibraryFromDrive() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+
+    saveStatus.textContent = "Loading image library from Drive...";
+
+    try {
+        let driveFileId = currentImageLibraryDriveFileId;
+        if (!driveFileId) {
+            driveFileId = await findImageLibraryDriveFileId();
+        }
+        if (!driveFileId) {
+            saveStatus.textContent = "No image library on Drive";
+            alert("No saved image library file was found on Google Drive yet.");
+            return;
+        }
+
+        const url = `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`;
+        const response = await fetch(url, {
+            headers: {
+                "Authorization": `Bearer ${accessToken}`
+            }
+        });
+        if (!response.ok) throw new Error("Drive download failed (HTTP " + response.status + ")");
+
+        const data = JSON.parse(await response.text());
+        if (!isImageLibraryDrivePayload(data)) {
+            throw new Error("Drive file is not a valid FlowCraft image library.");
+        }
+
+        const entries = Array.isArray(data.images) ? data.images : [];
+        const normalized = entries
+            .filter((entry) => entry && typeof entry.imageUrl === "string" && entry.imageUrl.trim())
+            .map((entry) => ({
+                id: String(entry.id || `imglib_${Date.now()}_${Math.floor(Math.random() * 1000)}`),
+                name: sanitizeImageLibraryName(entry.name || "Image", "Image"),
+                imageUrl: String(entry.imageUrl || ""),
+                updatedAt: Number(entry.updatedAt) || Date.now()
+            }))
+            .slice(0, MAX_IMAGE_LIBRARY_ITEMS);
+
+        saveImageLibraryEntries(normalized);
+        loadImageLibraryList();
+
+        currentImageLibraryDriveFileId = driveFileId;
+        localStorage.setItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY, driveFileId);
+        saveStatus.textContent = "Image library loaded from Drive";
+    } catch (err) {
+        saveStatus.textContent = "Image library load failed";
+        alert("Could not load image library from Drive: " + err.message);
+    }
+}
+
 // --- History Undo/Redo ---
 function saveHistory() {
     // Clear redo
@@ -4919,16 +5270,18 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
             ctx.closePath();
             break;
         case "cylinder": {
-            const ryCap = Math.min(12, h * 0.15);
-            const rxCap = (w - strokeW * 2) / 2;
-            const cx = x + w / 2;
-            const topY = y + ryCap;
-            const bottomY = y + h - ryCap;
+            const ryCap = Math.min(12, height * 0.15);
+            const rxCap = width / 2;
+            const cx = left + width / 2;
+            const topY = top + ryCap;
+            const bottomY = top + height - ryCap;
+            const right = left + width;
             ctx.beginPath();
-            ctx.ellipse(cx, topY, rxCap, ryCap, 0, Math.PI, 0, true);
-            ctx.lineTo(x + w - strokeW, bottomY);
-            ctx.ellipse(cx, bottomY, rxCap, ryCap, 0, 0, Math.PI, true);
-            ctx.lineTo(x + strokeW, topY);
+            ctx.moveTo(left, topY);
+            ctx.lineTo(left, bottomY);
+            ctx.ellipse(cx, bottomY, rxCap, ryCap, 0, Math.PI, 0, true);
+            ctx.lineTo(right, topY);
+            ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI, true);
             ctx.closePath();
             break;
         }
@@ -4971,6 +5324,37 @@ function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
             ctx.rect(left, top, width, height);
             ctx.closePath();
             break;
+    }
+}
+
+function drawCylinderTopCap(ctx, node, x, y, w, h, strokeW) {
+    if (!node || node.shapeType !== "cylinder") return;
+
+    const halfStroke = strokeW / 2;
+    const left = x + halfStroke;
+    const top = y + halfStroke;
+    const width = Math.max(1, w - strokeW);
+    const height = Math.max(1, h - strokeW);
+    const ryCap = Math.min(12, height * 0.15);
+    const rxCap = width / 2;
+    const cx = left + width / 2;
+    const topY = top + ryCap;
+
+    if (node.bgColor && node.bgColor !== "transparent") {
+        ctx.fillStyle = node.bgColor;
+        ctx.beginPath();
+        ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    if (strokeW > 0) {
+        ctx.strokeStyle = node.borderColor || "#64748b";
+        ctx.lineWidth = strokeW;
+        setDashedStroke(ctx, node.borderStyle || "solid");
+        ctx.beginPath();
+        ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
     }
 }
 
@@ -5264,7 +5648,9 @@ function loadImageElement(src) {
 }
 
 // Utility to render the flowchart model into a single PNG image URL
-async function getFlowchartCanvasImage() {
+async function getFlowchartCanvasImage(options = {}) {
+    const requestedScale = Number(options.scale);
+    const exportScale = Number.isFinite(requestedScale) && requestedScale > 0 ? Math.min(4, requestedScale) : 1;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     const nodeIds = Object.keys(nodes);
 
@@ -5287,10 +5673,12 @@ async function getFlowchartCanvasImage() {
     const originY = minY - margin;
 
     const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = outW;
-    exportCanvas.height = outH;
+    exportCanvas.width = Math.max(1, Math.round(outW * exportScale));
+    exportCanvas.height = Math.max(1, Math.round(outH * exportScale));
     const ctx = exportCanvas.getContext("2d");
     if (!ctx) throw new Error("Could not create export canvas");
+
+    ctx.setTransform(exportScale, 0, 0, exportScale, 0, 0);
 
     ctx.fillStyle = resolveCssColorVar("--bg-app", "#f8fafc");
     ctx.fillRect(0, 0, outW, outH);
@@ -5352,6 +5740,7 @@ async function getFlowchartCanvasImage() {
             drawNodeShapePath(ctx, node, x, y, w, h, strokeW);
             if (node.bgColor && node.bgColor !== "transparent") ctx.fill();
             if (strokeW > 0) ctx.stroke();
+            drawCylinderTopCap(ctx, node, x, y, w, h, strokeW);
 
             if (node.shapeType === "sticky-note") {
                 const foldSize = Math.min(w, h) * 0.2;
@@ -5387,7 +5776,7 @@ async function getFlowchartCanvasImage() {
 async function exportToPDF() {
     saveStatus.textContent = "Exporting PDF...";
     try {
-        const capture = await getFlowchartCanvasImage();
+        const capture = await getFlowchartCanvasImage({ scale: 3 });
         const { jsPDF } = window.jspdf;
         
         // Create matching landscape/portrait layout size PDF

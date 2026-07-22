@@ -132,6 +132,29 @@
                     </div>
                 </div>
 
+                <!-- Reusable Image Library -->
+                <div class="sidebar-section">
+                    <h3>Image Library</h3>
+                    <div class="button-group-vertical">
+                        <button class="btn btn-outline" id="btn-save-selected-image-library">
+                            <i class="fa-solid fa-bookmark"></i> Save Selected Image
+                        </button>
+                        <button class="btn btn-outline" id="btn-add-image-library-file">
+                            <i class="fa-solid fa-image"></i> Add Image File
+                        </button>
+                        <button class="btn btn-outline" id="btn-save-image-library-drive">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Save Library to Drive
+                        </button>
+                        <button class="btn btn-outline" id="btn-load-image-library-drive">
+                            <i class="fa-solid fa-cloud-arrow-down"></i> Load Library from Drive
+                        </button>
+                        <input type="file" id="image-library-file-input" accept="image/*" style="display: none;">
+                    </div>
+                    <div class="image-library-list" id="image-library-list">
+                        <div class="empty-state">No saved images.</div>
+                    </div>
+                </div>
+
                 <!-- Local Storage Map Manager -->
                 <div class="sidebar-section">
                     <h3>Local Workspaces</h3>
