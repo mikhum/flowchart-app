@@ -2130,11 +2130,6 @@ body.login-page {
     box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3);
 }
 
-.node-text.text-bold,
-.line-label.text-bold {
-    font-weight: 700 !important;
-}
-
 .node-text b,
 .node-text strong,
 .line-label b,

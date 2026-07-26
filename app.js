@@ -800,7 +800,16 @@ function setupEventListeners() {
     closeProperties.addEventListener("click", () => selectElement(null));
     propText.addEventListener("input", updateSelectedNodeText);
     propTextSize.addEventListener("input", updateSelectedNodeTextSize);
-    if (propTextBold) propTextBold.addEventListener("click", toggleSelectedNodeBold);
+    if (propTextBold) {
+        propTextBold.addEventListener("mousedown", (e) => e.preventDefault());
+        propTextBold.addEventListener("click", toggleSelectedNodeBold);
+    }
+    propText.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            toggleSelectedNodeBold();
+        }
+    });
     propUrl.addEventListener("input", updateSelectedNodeUrl);
     propTextPosition.addEventListener("change", updateSelectedNodeTextPosition);
     propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
@@ -819,8 +828,17 @@ function setupEventListeners() {
     propLineArrows.addEventListener("change", updateSelectedLineArrows);
     propLineText.addEventListener("input", updateSelectedLineText);
     propLineText.addEventListener("change", commitSelectedLineText);
+    propLineText.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            toggleSelectedLineBold();
+        }
+    });
     propLineTextSize.addEventListener("change", updateSelectedLineTextSize);
-    if (propLineTextBold) propLineTextBold.addEventListener("click", toggleSelectedLineBold);
+    if (propLineTextBold) {
+        propLineTextBold.addEventListener("mousedown", (e) => e.preventDefault());
+        propLineTextBold.addEventListener("click", toggleSelectedLineBold);
+    }
     btnLineBringFront.addEventListener("click", bringToFront);
     btnLineSendBack.addEventListener("click", sendToBack);
     btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
@@ -1956,7 +1974,6 @@ function render() {
                 textSpan.innerHTML = sanitizeTextHtml(node.text || "");
             }
             textSpan.style.fontSize = `${node.textSize || 14}px`;
-            textSpan.classList.toggle("text-bold", !!node.textBold);
             
             // Set text color dynamically for dark borders/fills
             if (node.bgColor === "transparent") {
@@ -2281,7 +2298,7 @@ function renderConnectors() {
                 const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
                 const offset = getLineLabelOffset(line);
                 const labelEl = document.createElement("div");
-                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder") + (line.labelBold ? " text-bold" : "");
+                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder");
                 labelEl.style.left = `${Math.round(anchor.x + offset.x)}px`;
                 labelEl.style.top = `${Math.round(anchor.y + offset.y)}px`;
                 labelEl.style.fontSize = `${Math.max(10, Number(line.labelSize) || 14)}px`;
@@ -2909,7 +2926,7 @@ function updatePropertiesPanel() {
         propBorderStyle.value = node.borderStyle;
         
         if (propTextBold) {
-            propTextBold.classList.toggle("active", !!node.textBold || /<(b|strong)\b/i.test(node.text || ""));
+            propTextBold.classList.toggle("active", /<(b|strong)\b/i.test(node.text || ""));
         }
         
         // update swatches selected ring
@@ -2935,7 +2952,7 @@ function updatePropertiesPanel() {
             propLineTextSize.value = String(Math.max(10, Number(line.labelSize) || 14));
             
             if (propLineTextBold) {
-                propLineTextBold.classList.toggle("active", !!line.labelBold || /<(b|strong)\b/i.test(line.label || ""));
+                propLineTextBold.classList.toggle("active", /<(b|strong)\b/i.test(line.label || ""));
             }
 
             document.querySelectorAll("#prop-linecolor-grid .color-swatch").forEach(s => {
@@ -2945,17 +2962,69 @@ function updatePropertiesPanel() {
     }
 }
 
+// Helper to apply bold to highlighted text inside textarea inputs
+function applyBoldToTextarea(textarea) {
+    if (!textarea) return false;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const val = textarea.value || "";
+
+    if (typeof start !== "number" || typeof end !== "number") return false;
+
+    if (start === end) {
+        const before = val.substring(0, start);
+        const after = val.substring(end);
+        textarea.value = before + "<b>bold text</b>" + after;
+        textarea.selectionStart = start + 3;
+        textarea.selectionEnd = start + 12;
+        return true;
+    }
+
+    const selectedText = val.substring(start, end);
+    const before = val.substring(0, start);
+    const after = val.substring(end);
+
+    if ((selectedText.startsWith("<b>") && selectedText.endsWith("</b>")) || 
+        (selectedText.startsWith("<strong>") && selectedText.endsWith("</strong>"))) {
+        const tagLen = selectedText.startsWith("<b>") ? 3 : 8;
+        const closeLen = selectedText.startsWith("<b>") ? 4 : 9;
+        const unwrapped = selectedText.substring(tagLen, selectedText.length - closeLen);
+        textarea.value = before + unwrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + unwrapped.length;
+    } else {
+        const wrapped = `<b>${selectedText}</b>`;
+        textarea.value = before + wrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + wrapped.length;
+    }
+    return true;
+}
+
 // Properties changes handlers
 function toggleSelectedNodeBold() {
-    if (editingNodeId) {
+    if (document.activeElement === propText) {
+        applyBoldToTextarea(propText);
+        updateSelectedNodeText();
+        saveHistory();
+        saveAutosave();
+        updatePropertiesPanel();
+        return;
+    }
+    if (editingNodeId || (document.activeElement && document.activeElement.contentEditable === "true")) {
         document.execCommand("bold", false, null);
         return;
     }
     if (selectedType === "node" && selectedNodeIds.size > 0) {
-        const allBold = Array.from(selectedNodeIds).every(nodeId => nodes[nodeId] && nodes[nodeId].textBold);
-        const newBold = !allBold;
         selectedNodeIds.forEach(nodeId => {
-            if (nodes[nodeId]) nodes[nodeId].textBold = newBold;
+            const node = nodes[nodeId];
+            if (!node) return;
+            const text = node.text || "";
+            if (text.startsWith("<b>") && text.endsWith("</b>")) {
+                node.text = text.substring(3, text.length - 4);
+            } else {
+                node.text = `<b>${text}</b>`;
+            }
         });
         saveHistory();
         saveAutosave();
@@ -2965,21 +3034,28 @@ function toggleSelectedNodeBold() {
 }
 
 function toggleSelectedLineBold() {
-    if (editingLineLabelId) {
+    if (document.activeElement === propLineText) {
+        applyBoldToTextarea(propLineText);
+        updateSelectedLineText();
+        commitSelectedLineText();
+        updatePropertiesPanel();
+        return;
+    }
+    if (editingLineLabelId || (document.activeElement && document.activeElement.contentEditable === "true")) {
         document.execCommand("bold", false, null);
         return;
     }
     if (selectedType === "line") {
         const lineIds = getActiveSelectedLineIds();
-        if (lineIds.length === 0) return;
-        const allBold = lineIds.every(lineId => {
-            const l = lines.find(line => line.id === lineId);
-            return l && l.labelBold;
-        });
-        const newBold = !allBold;
-        lineIds.forEach(lineId => {
-            const l = lines.find(line => line.id === lineId);
-            if (l) l.labelBold = newBold;
+        lineIds.forEach(id => {
+            const line = lines.find(l => l.id === id);
+            if (!line) return;
+            const label = line.label || "";
+            if (label.startsWith("<b>") && label.endsWith("</b>")) {
+                line.label = label.substring(3, label.length - 4);
+            } else {
+                line.label = `<b>${label}</b>`;
+            }
         });
         saveHistory();
         saveAutosave();
