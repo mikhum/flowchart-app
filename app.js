@@ -847,6 +847,27 @@ function setupEventListeners() {
     document.getElementById("btn-bring-front").addEventListener("click", bringToFront);
     document.getElementById("btn-send-back").addEventListener("click", sendToBack);
 
+    const btnMatchSize = document.getElementById("btn-match-size");
+    if (btnMatchSize) {
+        btnMatchSize.addEventListener("click", () => {
+            if (selectedType !== "node" || selectedNodeIds.size < 2) return;
+            const referenceNodeId = selectedId && nodes[selectedId] ? selectedId : Array.from(selectedNodeIds).find(nodeId => !!nodes[nodeId]);
+            const refNode = nodes[referenceNodeId];
+            if (!refNode) return;
+            
+            selectedNodeIds.forEach(id => {
+                if (id !== referenceNodeId && nodes[id]) {
+                    nodes[id].width = refNode.width;
+                    nodes[id].height = refNode.height;
+                }
+            });
+            saveHistory();
+            saveAutosave();
+            renderNodes();
+            renderConnectors();
+        });
+    }
+
     // Text color picker custom inputs
     if (propTextColorPicker) {
         propTextColorPicker.addEventListener("change", () => {
@@ -3093,6 +3114,11 @@ function updatePropertiesPanel() {
         propTextPosition.value = node.textPosition || "center";
         propNodeWidth.value = Math.round(node.width || 120);
         propNodeHeight.value = Math.round(node.height || 60);
+
+        const btnMatchSizeGroup = document.getElementById("prop-match-size-group");
+        if (btnMatchSizeGroup) {
+            btnMatchSizeGroup.style.display = selectedNodeIds.size > 1 ? "block" : "none";
+        }
         const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
         propCropLeft.value = Math.round((crop.left || 0) * 100);
         propCropTop.value = Math.round((crop.top || 0) * 100);
