@@ -2105,3 +2105,39 @@ body.login-page {
     color: #dc2626;
     background: rgba(239, 68, 68, 0.12);
 }
+
+/* Bold Text Formatting */
+.prop-group.row.align-end {
+    align-items: flex-end;
+}
+
+.btn-format-bold {
+    min-width: 38px;
+    height: 38px;
+    padding: 0 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    border-radius: 8px;
+    transition: all 0.15s ease;
+}
+
+.btn-format-bold.active {
+    background: #0284c7;
+    color: #ffffff;
+    border-color: #0284c7;
+    box-shadow: 0 2px 6px rgba(2, 132, 199, 0.3);
+}
+
+.node-text.text-bold,
+.line-label.text-bold {
+    font-weight: 700 !important;
+}
+
+.node-text b,
+.node-text strong,
+.line-label b,
+.line-label strong {
+    font-weight: 700;
+}

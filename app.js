@@ -351,6 +351,8 @@ const propLineWidth = document.getElementById("prop-line-width");
 const propLineArrows = document.getElementById("prop-line-arrows");
 const propLineText = document.getElementById("prop-line-text");
 const propLineTextSize = document.getElementById("prop-line-text-size");
+const propTextBold = document.getElementById("prop-text-bold");
+const propLineTextBold = document.getElementById("prop-line-text-bold");
 const btnSetDefaultLine = document.getElementById("btn-set-default-line");
 const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
 const btnLineBringFront = document.getElementById("btn-line-bring-front");
@@ -798,6 +800,7 @@ function setupEventListeners() {
     closeProperties.addEventListener("click", () => selectElement(null));
     propText.addEventListener("input", updateSelectedNodeText);
     propTextSize.addEventListener("input", updateSelectedNodeTextSize);
+    if (propTextBold) propTextBold.addEventListener("click", toggleSelectedNodeBold);
     propUrl.addEventListener("input", updateSelectedNodeUrl);
     propTextPosition.addEventListener("change", updateSelectedNodeTextPosition);
     propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
@@ -817,6 +820,7 @@ function setupEventListeners() {
     propLineText.addEventListener("input", updateSelectedLineText);
     propLineText.addEventListener("change", commitSelectedLineText);
     propLineTextSize.addEventListener("change", updateSelectedLineTextSize);
+    if (propLineTextBold) propLineTextBold.addEventListener("click", toggleSelectedLineBold);
     btnLineBringFront.addEventListener("click", bringToFront);
     btnLineSendBack.addEventListener("click", sendToBack);
     btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
@@ -1948,8 +1952,11 @@ function render() {
         // Set label text
         const textSpan = nodeEl.querySelector(".node-text");
         if (textSpan) {
-            textSpan.textContent = node.text;
+            if (editingNodeId !== id) {
+                textSpan.innerHTML = sanitizeTextHtml(node.text || "");
+            }
             textSpan.style.fontSize = `${node.textSize || 14}px`;
+            textSpan.classList.toggle("text-bold", !!node.textBold);
             
             // Set text color dynamically for dark borders/fills
             if (node.bgColor === "transparent") {
@@ -2024,6 +2031,40 @@ function sanitizeCssColor(val, fallback) {
 function sanitizeUrl(raw) {
     const trimmed = String(raw || "").trim();
     return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+}
+
+// Sanitizes HTML text input to safely allow formatting tags (b, strong, i, em, u, br, span)
+function sanitizeTextHtml(raw) {
+    if (raw === null || raw === undefined) return "";
+    const str = String(raw);
+    if (!str) return "";
+    if (!/<[a-z][\s\S]*>/i.test(str)) {
+        return str;
+    }
+    const temp = document.createElement("div");
+    temp.innerHTML = str;
+    
+    const allowedTags = ["B", "STRONG", "I", "EM", "U", "BR", "SPAN"];
+    const cleanElement = (el) => {
+        const children = Array.from(el.childNodes);
+        children.forEach((child) => {
+            if (child.nodeType === 1) {
+                if (!allowedTags.includes(child.tagName)) {
+                    const textNode = document.createTextNode(child.textContent || "");
+                    el.replaceChild(textNode, child);
+                } else {
+                    Array.from(child.attributes).forEach(attr => {
+                        if (attr.name !== "style") {
+                            child.removeAttribute(attr.name);
+                        }
+                    });
+                    cleanElement(child);
+                }
+            }
+        });
+    };
+    cleanElement(temp);
+    return temp.innerHTML;
 }
 
 function generateShapeSVG(node) {
@@ -2240,11 +2281,15 @@ function renderConnectors() {
                 const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
                 const offset = getLineLabelOffset(line);
                 const labelEl = document.createElement("div");
-                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder");
+                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder") + (line.labelBold ? " text-bold" : "");
                 labelEl.style.left = `${Math.round(anchor.x + offset.x)}px`;
                 labelEl.style.top = `${Math.round(anchor.y + offset.y)}px`;
                 labelEl.style.fontSize = `${Math.max(10, Number(line.labelSize) || 14)}px`;
-                labelEl.textContent = hasLabel ? line.label : "Line text";
+                if (hasLabel) {
+                    labelEl.innerHTML = sanitizeTextHtml(line.label);
+                } else {
+                    labelEl.textContent = "Line text";
+                }
                 labelEl.title = hasLabel ? "Click to edit. Shift+drag to move line text" : "Add text in properties, then click to edit or Shift+drag to move";
                 labelEl.addEventListener("pointerdown", (e) => {
                     if (editingLineLabelId === line.id) return;
@@ -2675,16 +2720,21 @@ function startTextEdit(nodeId) {
     // Select text range
     document.execCommand('selectAll', false, null);
     
-    const originalText = nodes[nodeId].text;
+    const originalText = nodes[nodeId].text || "";
     
     textSpan.addEventListener("keydown", (e) => {
         e.stopPropagation();
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            document.execCommand("bold", false, null);
+            return;
+        }
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             textSpan.blur();
         }
         if (e.key === "Escape") {
-            textSpan.textContent = originalText;
+            textSpan.innerHTML = sanitizeTextHtml(originalText);
             editingNodeId = null;
             textSpan.blur();
             render();
@@ -2692,7 +2742,7 @@ function startTextEdit(nodeId) {
     });
     
     textSpan.addEventListener("blur", () => {
-        const text = textSpan.textContent.trim();
+        const text = sanitizeTextHtml(textSpan.innerHTML);
         textSpan.contentEditable = "false";
         textSpan.classList.remove("node-editor");
         
@@ -2703,6 +2753,7 @@ function startTextEdit(nodeId) {
         }
         editingNodeId = null;
         render();
+        updatePropertiesPanel();
     }, { once: true });
 }
 
@@ -2720,7 +2771,7 @@ function startLineLabelEdit(lineId, labelEl) {
     labelEl.contentEditable = "true";
     labelEl.classList.add("line-label-editor");
     labelEl.classList.remove("placeholder");
-    labelEl.textContent = originalText;
+    labelEl.innerHTML = sanitizeTextHtml(originalText);
     labelEl.focus();
     document.execCommand("selectAll", false, null);
 
@@ -2738,7 +2789,7 @@ function startLineLabelEdit(lineId, labelEl) {
             return;
         }
 
-        const nextText = labelEl.textContent || "";
+        const nextText = sanitizeTextHtml(labelEl.innerHTML || "");
         if (line.label !== nextText) {
             line.label = nextText;
             saveHistory();
@@ -2750,6 +2801,11 @@ function startLineLabelEdit(lineId, labelEl) {
 
     labelEl.onkeydown = (e) => {
         e.stopPropagation();
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            document.execCommand("bold", false, null);
+            return;
+        }
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             labelEl.blur();
@@ -2852,6 +2908,10 @@ function updatePropertiesPanel() {
         propBorderWidth.value = node.borderWidth;
         propBorderStyle.value = node.borderStyle;
         
+        if (propTextBold) {
+            propTextBold.classList.toggle("active", !!node.textBold || /<(b|strong)\b/i.test(node.text || ""));
+        }
+        
         // update swatches selected ring
         document.querySelectorAll("#prop-bgcolor-grid .color-swatch").forEach(s => {
             s.classList.toggle("selected", s.dataset.color === node.bgColor);
@@ -2874,6 +2934,10 @@ function updatePropertiesPanel() {
             propLineText.value = line.label || "";
             propLineTextSize.value = String(Math.max(10, Number(line.labelSize) || 14));
             
+            if (propLineTextBold) {
+                propLineTextBold.classList.toggle("active", !!line.labelBold || /<(b|strong)\b/i.test(line.label || ""));
+            }
+
             document.querySelectorAll("#prop-linecolor-grid .color-swatch").forEach(s => {
                 s.classList.toggle("selected", s.dataset.color === line.color);
             });
@@ -2882,13 +2946,55 @@ function updatePropertiesPanel() {
 }
 
 // Properties changes handlers
+function toggleSelectedNodeBold() {
+    if (editingNodeId) {
+        document.execCommand("bold", false, null);
+        return;
+    }
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const allBold = Array.from(selectedNodeIds).every(nodeId => nodes[nodeId] && nodes[nodeId].textBold);
+        const newBold = !allBold;
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].textBold = newBold;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        updatePropertiesPanel();
+    }
+}
+
+function toggleSelectedLineBold() {
+    if (editingLineLabelId) {
+        document.execCommand("bold", false, null);
+        return;
+    }
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        const allBold = lineIds.every(lineId => {
+            const l = lines.find(line => line.id === lineId);
+            return l && l.labelBold;
+        });
+        const newBold = !allBold;
+        lineIds.forEach(lineId => {
+            const l = lines.find(line => line.id === lineId);
+            if (l) l.labelBold = newBold;
+        });
+        saveHistory();
+        saveAutosave();
+        renderConnectors();
+        updatePropertiesPanel();
+    }
+}
+
 function updateSelectedNodeText() {
     if (selectedType === "node" && selectedNodeIds.size > 0) {
         selectedNodeIds.forEach(nodeId => {
             if (!nodes[nodeId]) return;
-            nodes[nodeId].text = propText.value;
+            nodes[nodeId].text = sanitizeTextHtml(propText.value);
             const textSpan = document.querySelector(`#node-${nodeId} .node-text`);
-            if (textSpan) textSpan.textContent = propText.value;
+            if (textSpan) textSpan.innerHTML = sanitizeTextHtml(propText.value);
         });
     }
 }
@@ -3529,6 +3635,16 @@ function handleKeyDown(e) {
     }
 
     const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    if (isCtrlOrCmd && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (selectedType === "node" && selectedNodeIds.size > 0) {
+            toggleSelectedNodeBold();
+        } else if (selectedType === "line") {
+            toggleSelectedLineBold();
+        }
+        return;
+    }
 
     if (isCtrlOrCmd && e.shiftKey) {
         let alignMode = null;
@@ -5451,7 +5567,9 @@ function addCloudPath(ctx, x, y, w, h) {
 
 function drawNodeLabel(ctx, node, x, y, w, h) {
     if (node.type === "image") return;
-    const rawLines = String(node.text || "").split("\n");
+    const isBold = !!node.textBold || /<(b|strong)\b/i.test(node.text || "");
+    const plainText = String(node.text || "").replace(/<[^>]*>/g, "");
+    const rawLines = plainText.split("\n");
     const textSize = Number(node.textSize) || 14;
     const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
     const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
@@ -5464,7 +5582,7 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
     ctx.fillStyle = getNodeTextColor(node);
     ctx.textAlign = placement.textAlign;
     ctx.textBaseline = "alphabetic";
-    ctx.font = `${textSize}px Inter, Arial, sans-serif`;
+    ctx.font = `${isBold ? "bold " : ""}${textSize}px Inter, Arial, sans-serif`;
 
     const linesText = wrapTextForCanvas(ctx, rawLines, contentWidth);
     const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
