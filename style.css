@@ -2136,3 +2136,40 @@ body.login-page {
 .line-label strong {
     font-weight: 700;
 }
+
+/* Text Color Paint */
+.prop-group-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.prop-group-header-row label {
+    margin-bottom: 0;
+}
+
+.color-picker-input {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    background: none;
+    flex-shrink: 0;
+}
+
+.color-picker-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.color-picker-input::-webkit-color-swatch {
+    border: 2px solid rgba(0,0,0,0.15);
+    border-radius: 5px;
+}
+
+.node-text span[style*="color"],
+.line-label span[style*="color"] {
+    display: inline;
+}

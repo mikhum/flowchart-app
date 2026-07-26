@@ -211,6 +211,10 @@ const BORDER_COLORS = [
     "#64748b", "#334155", "#0f172a", "#0ea5e9", "#0891b2", "#10b981", 
     "#f59e0b", "#f43f5e", "#8b5cf6", "#d946ef", "#4f46e5", "#cbd5e1"
 ];
+const TEXT_COLORS = [
+    "#0f172a", "#334155", "#ffffff", "#ef4444", "#f97316", "#eab308",
+    "#22c55e", "#0ea5e9", "#8b5cf6", "#d946ef", "#4f46e5", "#10b981"
+];
 
 const DEFAULT_LINE_SETTINGS_KEY = "flowcraft_default_line_settings";
 const DEFAULT_LINE_SETTINGS = {
@@ -353,6 +357,10 @@ const propLineText = document.getElementById("prop-line-text");
 const propLineTextSize = document.getElementById("prop-line-text-size");
 const propTextBold = document.getElementById("prop-text-bold");
 const propLineTextBold = document.getElementById("prop-line-text-bold");
+const propTextColorPicker = document.getElementById("prop-textcolor-picker");
+const propTextColorGrid = document.getElementById("prop-textcolor-grid");
+const propLineTextColorPicker = document.getElementById("prop-line-textcolor-picker");
+const propLineTextColorGrid = document.getElementById("prop-line-textcolor-grid");
 const btnSetDefaultLine = document.getElementById("btn-set-default-line");
 const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
 const btnLineBringFront = document.getElementById("btn-line-bring-front");
@@ -614,41 +622,31 @@ function snap(val) {
 }
 
 // --- Color Pickers Setup ---
-function setupColorPickers() {
-    const bgGrid = document.getElementById("prop-bgcolor-grid");
-    const borderGrid = document.getElementById("prop-bordercolor-grid");
-    const lineGrid = document.getElementById("prop-linecolor-grid");
-    
-    bgGrid.innerHTML = "";
-    borderGrid.innerHTML = "";
-    lineGrid.innerHTML = "";
-    
-    BG_COLORS.forEach(color => {
+function buildSwatchGrid(grid, colors, onClickFn) {
+    grid.innerHTML = "";
+    colors.forEach(color => {
         const swatch = document.createElement("div");
         swatch.className = "color-swatch";
         swatch.style.backgroundColor = color;
         swatch.dataset.color = color;
-        swatch.addEventListener("click", () => selectBgColor(color));
-        bgGrid.appendChild(swatch);
+        swatch.addEventListener("mousedown", (e) => e.preventDefault());
+        swatch.addEventListener("click", () => onClickFn(color));
+        grid.appendChild(swatch);
     });
-    
-    BORDER_COLORS.forEach(color => {
-        // for border
-        const swatchB = document.createElement("div");
-        swatchB.className = "color-swatch";
-        swatchB.style.backgroundColor = color;
-        swatchB.dataset.color = color;
-        swatchB.addEventListener("click", () => selectBorderColor(color));
-        borderGrid.appendChild(swatchB);
-        
-        // for lines
-        const swatchL = document.createElement("div");
-        swatchL.className = "color-swatch";
-        swatchL.style.backgroundColor = color;
-        swatchL.dataset.color = color;
-        swatchL.addEventListener("click", () => selectLineColor(color));
-        lineGrid.appendChild(swatchL);
-    });
+}
+
+function setupColorPickers() {
+    const bgGrid = document.getElementById("prop-bgcolor-grid");
+    const borderGrid = document.getElementById("prop-bordercolor-grid");
+    const lineGrid = document.getElementById("prop-linecolor-grid");
+
+    buildSwatchGrid(bgGrid, BG_COLORS, selectBgColor);
+    buildSwatchGrid(borderGrid, BORDER_COLORS, selectBorderColor);
+    buildSwatchGrid(lineGrid, BORDER_COLORS, selectLineColor);
+
+    // Text color grids
+    if (propTextColorGrid) buildSwatchGrid(propTextColorGrid, TEXT_COLORS, (color) => applyTextColorToSelection(color, "node"));
+    if (propLineTextColorGrid) buildSwatchGrid(propLineTextColorGrid, TEXT_COLORS, (color) => applyTextColorToSelection(color, "line"));
 }
 
 function selectBgColor(color) {
@@ -847,6 +845,18 @@ function setupEventListeners() {
     
     document.getElementById("btn-bring-front").addEventListener("click", bringToFront);
     document.getElementById("btn-send-back").addEventListener("click", sendToBack);
+
+    // Text color picker custom inputs
+    if (propTextColorPicker) {
+        propTextColorPicker.addEventListener("change", () => {
+            applyTextColorToSelection(propTextColorPicker.value, "node");
+        });
+    }
+    if (propLineTextColorPicker) {
+        propLineTextColorPicker.addEventListener("change", () => {
+            applyTextColorToSelection(propLineTextColorPicker.value, "line");
+        });
+    }
 
     // Clipboard pasting
     window.addEventListener("paste", handleClipboardPaste);
@@ -2071,7 +2081,16 @@ function sanitizeTextHtml(raw) {
                     el.replaceChild(textNode, child);
                 } else {
                     Array.from(child.attributes).forEach(attr => {
-                        if (attr.name !== "style") {
+                        if (attr.name === "style") {
+                            // Only allow color and font-weight style properties
+                            const allowed = (child.style.color ? `color:${child.style.color};` : "") +
+                                            (child.style.fontWeight ? `font-weight:${child.style.fontWeight};` : "");
+                            if (allowed) {
+                                child.setAttribute("style", allowed);
+                            } else {
+                                child.removeAttribute("style");
+                            }
+                        } else {
                             child.removeAttribute(attr.name);
                         }
                     });
@@ -2082,6 +2101,64 @@ function sanitizeTextHtml(raw) {
     };
     cleanElement(temp);
     return temp.innerHTML;
+}
+
+// Apply text color to the current selection in textarea or contenteditable
+function applyTextColorToSelection(color, context) {
+    const textarea = context === "node" ? propText : propLineText;
+
+    // Case 1: typing in the Properties Panel textarea — wrap selection
+    if (document.activeElement === textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const val = textarea.value || "";
+        const before = val.substring(0, start);
+        const selected = val.substring(start, end);
+        const after = val.substring(end);
+        if (start === end) return; // No selection, nothing to paint
+        const wrapped = `<span style="color:${color}">${selected}</span>`;
+        textarea.value = before + wrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + wrapped.length;
+        if (context === "node") {
+            updateSelectedNodeText();
+            saveHistory(); saveAutosave();
+        } else {
+            updateSelectedLineText();
+            commitSelectedLineText();
+        }
+        updatePropertiesPanel();
+        return;
+    }
+
+    // Case 2: actively editing inline on canvas (contenteditable)
+    if ((context === "node" && editingNodeId) || (context === "line" && editingLineLabelId)) {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) return;
+        document.execCommand("styleWithCSS", false, true);
+        document.execCommand("foreColor", false, color);
+        return;
+    }
+
+    // Case 3: element selected but not editing — wrap entire text in color span
+    if (context === "node" && selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            const node = nodes[nodeId];
+            if (!node) return;
+            node.text = `<span style="color:${color}">${node.text || ""}</span>`;
+        });
+        saveHistory(); saveAutosave();
+        render();
+    } else if (context === "line" && selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        lineIds.forEach(id => {
+            const line = lines.find(l => l.id === id);
+            if (!line) return;
+            line.label = `<span style="color:${color}">${line.label || ""}</span>`;
+        });
+        saveHistory(); saveAutosave();
+        renderConnectors();
+    }
 }
 
 function generateShapeSVG(node) {
