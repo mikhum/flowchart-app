@@ -1,0 +1,212 @@
+{
+  "format": "mindflow",
+  "version": "1.0",
+  "name": "Flowchart app",
+  "nodes": {
+    "root": {
+      "id": "root",
+      "text": "Flowchart app",
+      "parent": null,
+      "x": 0,
+      "y": 0,
+      "color": {
+        "bg": "#0ea5e9"
+      }
+    },
+    "mqy29lcn7nrqbx7yki2": {
+      "id": "mqy29lcn7nrqbx7yki2",
+      "text": "Shapes",
+      "parent": "root",
+      "x": 490,
+      "y": -101
+    },
+    "mqy29vh2lqfd6ckdol8": {
+      "id": "mqy29vh2lqfd6ckdol8",
+      "text": "Standard  shapes\n as from Lucidchart",
+      "parent": "mqy29lcn7nrqbx7yki2",
+      "x": 314,
+      "y": 0,
+      "collapsed": false,
+      "depthFilterExpanded": false
+    },
+    "mqy2edjbn1o1ogt3c9d": {
+      "id": "mqy2edjbn1o1ogt3c9d",
+      "text": "Drawing",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 318,
+      "y": -979
+    },
+    "mqy2ei47nb10uzzsnxn": {
+      "id": "mqy2ei47nb10uzzsnxn",
+      "text": "Library as attached screenshot",
+      "parent": "mqy2edjbn1o1ogt3c9d",
+      "x": 330,
+      "y": -89
+    },
+    "mqy2ev9r53k2jc22982": {
+      "id": "mqy2ev9r53k2jc22982",
+      "text": "Lines with/without arrows",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 359,
+      "y": -712
+    },
+    "mqy2ff6wjyh54t1ap4n": {
+      "id": "mqy2ff6wjyh54t1ap4n",
+      "text": "Functionality to change  the borders and lines to other  type of lines",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 493,
+      "y": 0
+    },
+    "mqy2gk004dp22pxrpp": {
+      "id": "mqy2gk004dp22pxrpp",
+      "text": "Dotted",
+      "parent": "mqy2ff6wjyh54t1ap4n",
+      "x": 497,
+      "y": -178
+    },
+    "mqy2h75zw95e63i6i9": {
+      "id": "mqy2h75zw95e63i6i9",
+      "text": "Thickness",
+      "parent": "mqy2ff6wjyh54t1ap4n",
+      "x": 506,
+      "y": 0
+    },
+    "mqy2hgk7wj8lcwg7lc": {
+      "id": "mqy2hgk7wj8lcwg7lc",
+      "text": "etc..",
+      "parent": "mqy2ff6wjyh54t1ap4n",
+      "x": 490,
+      "y": 178
+    },
+    "mqy2jjs0vr0tviah81f": {
+      "id": "mqy2jjs0vr0tviah81f",
+      "text": "Network infrastructure",
+      "parent": "mqy2edjbn1o1ogt3c9d",
+      "x": 307,
+      "y": 89
+    },
+    "mqy2kzmojsx8tw8z1uq": {
+      "id": "mqy2kzmojsx8tw8z1uq",
+      "text": "Infrastructure",
+      "parent": "root",
+      "x": 518,
+      "y": 1169,
+      "comment": "Se repo MindFlow1",
+      "collapsed": false,
+      "depthFilterExpanded": false
+    },
+    "mqy2l6qxln7tz8hlfvo": {
+      "id": "mqy2l6qxln7tz8hlfvo",
+      "text": "Log on with google",
+      "parent": "mqy2kzmojsx8tw8z1uq",
+      "x": 338,
+      "y": -356
+    },
+    "mqy2lf69stxhiszcd4q": {
+      "id": "mqy2lf69stxhiszcd4q",
+      "text": "Save app data at Google",
+      "parent": "mqy2kzmojsx8tw8z1uq",
+      "x": 356,
+      "y": -178
+    },
+    "mqy2m4s9nmsgqkvi6i": {
+      "id": "mqy2m4s9nmsgqkvi6i",
+      "text": "Only hummel.se can log on",
+      "parent": "mqy2kzmojsx8tw8z1uq",
+      "x": 362,
+      "y": 0
+    },
+    "mqy2nqqifqqefzg9835": {
+      "id": "mqy2nqqifqqefzg9835",
+      "text": "Text size should be possible to edit",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 383,
+      "y": -534
+    },
+    "mqy2oe1eyh4ir464ecr": {
+      "id": "mqy2oe1eyh4ir464ecr",
+      "text": "Save as pdf",
+      "parent": "mqy2kzmojsx8tw8z1uq",
+      "x": 316,
+      "y": 178
+    },
+    "mqy2ojjv4lz2ohdntee": {
+      "id": "mqy2ojjv4lz2ohdntee",
+      "text": "Color should be possible to add on object\nboth background and borders\n",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 403,
+      "y": 356
+    },
+    "mqy2raje82lsq3v98o6": {
+      "id": "mqy2raje82lsq3v98o6",
+      "text": "Save as word",
+      "parent": "mqy2kzmojsx8tw8z1uq",
+      "x": 321,
+      "y": 356
+    },
+    "mqy2sl8bhcrn2f4rab9": {
+      "id": "mqy2sl8bhcrn2f4rab9",
+      "text": "Handling",
+      "parent": "root",
+      "x": -495,
+      "y": 0
+    },
+    "mqy2sseqsx0nda47p9": {
+      "id": "mqy2sseqsx0nda47p9",
+      "text": "Drag and drop of objects",
+      "parent": "mqy2sl8bhcrn2f4rab9",
+      "x": -327,
+      "y": -89
+    },
+    "mqy2t2b7gu8xfpzly4": {
+      "id": "mqy2t2b7gu8xfpzly4",
+      "text": "Attaching line to object holders",
+      "parent": "mqy2sl8bhcrn2f4rab9",
+      "x": -345,
+      "y": 89
+    },
+    "mqy2ufobxfrgxmuon1": {
+      "id": "mqy2ufobxfrgxmuon1",
+      "text": "Text could be moved and placed anywhere",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 408,
+      "y": -356
+    },
+    "mqy2w8fouruqgdvve3": {
+      "id": "mqy2w8fouruqgdvve3",
+      "text": "It should be possible to:",
+      "parent": "mqy29vh2lqfd6ckdol8",
+      "x": 362,
+      "y": 801
+    },
+    "mqy2wj911ffc3icw4ee": {
+      "id": "mqy2wj911ffc3icw4ee",
+      "text": "Paste objects from screenshots",
+      "parent": "mqy2w8fouruqgdvve3",
+      "x": 390,
+      "y": -267
+    },
+    "mqy2wxckdempb8wdvdj": {
+      "id": "mqy2wxckdempb8wdvdj",
+      "text": "Paste pictures",
+      "parent": "mqy2w8fouruqgdvve3",
+      "x": 339,
+      "y": -89
+    },
+    "mqy2xhi5z8p5b92sz5": {
+      "id": "mqy2xhi5z8p5b92sz5",
+      "text": "Open links with url",
+      "parent": "mqy2w8fouruqgdvve3",
+      "x": 352,
+      "y": 89
+    },
+    "mqy2xlqc3mr07x8ovz7": {
+      "id": "mqy2xlqc3mr07x8ovz7",
+      "text": "New Topic",
+      "parent": "mqy2w8fouruqgdvve3",
+      "x": 328,
+      "y": 267
+    }
+  },
+  "relationships": []
+}
