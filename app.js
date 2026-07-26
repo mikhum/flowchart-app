@@ -5718,11 +5718,107 @@ function addCloudPath(ctx, x, y, w, h) {
     ctx.closePath();
 }
 
+function parseRichTextForCanvas(html, defaultColor) {
+    const temp = document.createElement("div");
+    temp.innerHTML = String(html || "").replace(/<br\s*\/?>/gi, '\n');
+    const runs = [];
+    
+    function traverse(node, color, bold) {
+        if (node.nodeType === 3) {
+            if (node.textContent) {
+                const parts = node.textContent.split('\n');
+                for (let i = 0; i < parts.length; i++) {
+                    if (i > 0) runs.push({ text: '\n' });
+                    if (parts[i]) runs.push({ text: parts[i], color, bold });
+                }
+            }
+        } else if (node.nodeType === 1) {
+            if (node.tagName === 'DIV' || node.tagName === 'P') {
+                if (runs.length > 0 && runs[runs.length - 1].text !== '\n') {
+                    runs.push({ text: '\n' });
+                }
+            }
+            let nextColor = color;
+            let nextBold = bold;
+            if (node.tagName === 'B' || node.tagName === 'STRONG') nextBold = true;
+            if (node.style && node.style.color) nextColor = node.style.color;
+            if (node.style && node.style.fontWeight === 'bold') nextBold = true;
+            
+            node.childNodes.forEach(child => traverse(child, nextColor, nextBold));
+            
+            if (node.tagName === 'DIV' || node.tagName === 'P') {
+                runs.push({ text: '\n' });
+            }
+        }
+    }
+    traverse(temp, defaultColor, false);
+    return runs;
+}
+
+function wrapRichTextForCanvas(ctx, runs, maxWidth, defaultFontSize, defaultBold) {
+    const lines = [];
+    let currentLineRuns = [];
+    let currentLineWidth = 0;
+    
+    const pushLine = () => {
+        lines.push({ runs: currentLineRuns, width: currentLineWidth });
+        currentLineRuns = [];
+        currentLineWidth = 0;
+    };
+    
+    const setFont = (bold) => {
+        ctx.font = `${bold || defaultBold ? "bold " : ""}${defaultFontSize}px Inter, Arial, sans-serif`;
+    };
+
+    runs.forEach(run => {
+        if (run.text === '\n') {
+            pushLine();
+            return;
+        }
+        
+        setFont(run.bold);
+        const words = run.text.split(/(\s+)/);
+        
+        words.forEach(word => {
+            if (!word) return;
+            const w = ctx.measureText(word).width;
+            
+            if (currentLineWidth + w > maxWidth && currentLineWidth > 0 && word.trim().length > 0) {
+                pushLine();
+                setFont(run.bold);
+            }
+            
+            if (w > maxWidth && word.trim().length > 0) {
+                let chunk = "";
+                for (const ch of word) {
+                    const cw = ctx.measureText(chunk + ch).width;
+                    if (currentLineWidth + cw > maxWidth && currentLineWidth > 0) {
+                        pushLine();
+                        setFont(run.bold);
+                        chunk = ch;
+                    } else {
+                        chunk += ch;
+                    }
+                }
+                if (chunk) {
+                    currentLineRuns.push({ text: chunk, color: run.color, bold: run.bold });
+                    currentLineWidth += ctx.measureText(chunk).width;
+                }
+            } else {
+                currentLineRuns.push({ text: word, color: run.color, bold: run.bold });
+                currentLineWidth += w;
+            }
+        });
+    });
+    
+    if (currentLineRuns.length > 0) pushLine();
+    if (lines.length === 0) lines.push({ runs: [], width: 0 });
+    return lines;
+}
+
 function drawNodeLabel(ctx, node, x, y, w, h) {
     if (node.type === "image") return;
-    const isBold = !!node.textBold || /<(b|strong)\b/i.test(node.text || "");
-    const plainText = String(node.text || "").replace(/<[^>]*>/g, "");
-    const rawLines = plainText.split("\n");
+    const isBold = !!node.textBold;
     const textSize = Number(node.textSize) || 14;
     const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
     const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
@@ -5732,12 +5828,11 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
     const paddingY = Math.max(8, Math.round(textSize * 0.6));
     const contentWidth = Math.max(0, w - paddingX * 2);
 
-    ctx.fillStyle = getNodeTextColor(node);
-    ctx.textAlign = placement.textAlign;
+    const defaultColor = getNodeTextColor(node);
+    const runs = parseRichTextForCanvas(node.text, defaultColor);
+    
     ctx.textBaseline = "alphabetic";
-    ctx.font = `${isBold ? "bold " : ""}${textSize}px Inter, Arial, sans-serif`;
-
-    const linesText = wrapTextForCanvas(ctx, rawLines, contentWidth);
+    const linesText = wrapRichTextForCanvas(ctx, runs, contentWidth, textSize, isBold);
     const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
 
     let anchorX = x + w / 2;
@@ -5761,12 +5856,24 @@ function drawNodeLabel(ctx, node, x, y, w, h) {
         startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
     }
 
-    linesText.forEach((line, index) => {
+    linesText.forEach((lineObj, index) => {
         let drawX = anchorX + offsetX;
         if (placement.horizontal === "left") drawX = x + paddingX + offsetX;
         if (placement.horizontal === "right") drawX = x + w - paddingX + offsetX;
         if (placement.horizontal === "center") drawX = x + w / 2 + offsetX;
-        ctx.fillText(line, drawX, startY + index * lineHeight + offsetY);
+        
+        let currentX = drawX;
+        if (placement.horizontal === "center") currentX -= lineObj.width / 2;
+        if (placement.horizontal === "right") currentX -= lineObj.width;
+        
+        const currentY = startY + index * lineHeight + offsetY;
+        
+        lineObj.runs.forEach(run => {
+            ctx.font = `${run.bold || isBold ? "bold " : ""}${textSize}px Inter, Arial, sans-serif`;
+            ctx.fillStyle = run.color;
+            ctx.fillText(run.text, currentX, currentY);
+            currentX += ctx.measureText(run.text).width;
+        });
     });
 }
 
@@ -5942,6 +6049,58 @@ function drawLineOnCanvas(ctx, line) {
     }
 
     ctx.setLineDash([]);
+
+    // Draw line label
+    const hasLabel = typeof line.label === "string" && line.label.trim().length > 0;
+    if (hasLabel) {
+        const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
+        const offset = getLineLabelOffset(line);
+        const labelSize = Math.max(10, Number(line.labelSize) || 14);
+        const runs = parseRichTextForCanvas(line.label, "#0f172a");
+        const linesText = wrapRichTextForCanvas(ctx, runs, 220, labelSize, true); // line labels are bold 600 by default
+        
+        const lineHeight = labelSize * 1.25;
+        const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
+        const maxLineWidth = linesText.reduce((max, l) => Math.max(max, l.width), 0);
+        
+        const centerX = anchor.x + offset.x;
+        const centerY = anchor.y + offset.y;
+        
+        const padX = 7;
+        const padY = 3;
+        const bgW = maxLineWidth + padX * 2;
+        const bgH = totalHeight + padY * 2;
+        
+        // Draw background box
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        if (ctx.roundRect) {
+            ctx.roundRect(centerX - bgW / 2, centerY - bgH / 2, bgW, bgH, 8);
+        } else {
+            ctx.rect(centerX - bgW / 2, centerY - bgH / 2, bgW, bgH);
+        }
+        ctx.fill();
+        ctx.stroke();
+        
+        // Draw text
+        ctx.textBaseline = "middle";
+        const startY = centerY - totalHeight / 2 + lineHeight / 2;
+        
+        linesText.forEach((lineObj, index) => {
+            let currentX = centerX - lineObj.width / 2;
+            const currentY = startY + index * lineHeight;
+            
+            lineObj.runs.forEach(run => {
+                ctx.font = `bold ${labelSize}px Inter, Arial, sans-serif`;
+                ctx.fillStyle = run.color;
+                ctx.fillText(run.text, currentX, currentY);
+                currentX += ctx.measureText(run.text).width;
+            });
+        });
+    }
 }
 
 function loadImageElement(src) {
