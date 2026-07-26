@@ -264,6 +264,7 @@ const nodesContainer = document.getElementById("nodes-container");
 const svgOverlayBack = document.getElementById("svg-overlay-back");
 const svgOverlayFront = document.getElementById("svg-overlay-front");
 const svgOverlayHit = document.getElementById("svg-overlay-hit");
+const svgAlignmentGuides = document.getElementById("svg-alignment-guides");
 const lineHandlesLayer = document.getElementById("line-handles-layer");
 const nodeHandlesLayer = document.getElementById("node-handles-layer");
 const marqueeSelectionBox = document.getElementById("marquee-selection-box");
@@ -1320,11 +1321,102 @@ function handleGlobalPointerMove(e) {
             ? Array.from(selectedNodeIds)
             : [draggingNodeId];
 
+        const tentativePositions = {};
         draggedSelection.forEach(nodeId => {
             if (!nodes[nodeId]) return;
             const startPos = dragStartNodePositions[nodeId] || { x: nodes[nodeId].x, y: nodes[nodeId].y };
-            nodes[nodeId].x = snap(startPos.x + dx);
-            nodes[nodeId].y = snap(startPos.y + dy);
+            tentativePositions[nodeId] = {
+                x: snap(startPos.x + dx),
+                y: snap(startPos.y + dy)
+            };
+        });
+
+        const primaryNode = nodes[draggingNodeId];
+        let snapOffsetX = 0;
+        let snapOffsetY = 0;
+        const guidesToDraw = [];
+        
+        if (primaryNode) {
+            const tx = tentativePositions[draggingNodeId].x;
+            const ty = tentativePositions[draggingNodeId].y;
+            const w = primaryNode.width;
+            const h = primaryNode.height;
+            
+            const edgesX = [
+                { type: "left", val: tx - w / 2 },
+                { type: "right", val: tx + w / 2 }
+            ];
+            const edgesY = [
+                { type: "top", val: ty - h / 2 },
+                { type: "bottom", val: ty + h / 2 }
+            ];
+            
+            const SNAP_THRESHOLD = 5;
+            let bestSnapX = null;
+            let bestSnapY = null;
+            let minDistX = SNAP_THRESHOLD;
+            let minDistY = SNAP_THRESHOLD;
+            let matchNodeX = null;
+            let matchNodeY = null;
+            
+            Object.keys(nodes).forEach(id => {
+                if (draggedSelection.includes(id)) return;
+                const staticNode = nodes[id];
+                const sw = staticNode.width;
+                const sh = staticNode.height;
+                const sx = staticNode.x;
+                const sy = staticNode.y;
+                
+                const sEdgesX = [sx - sw / 2, sx + sw / 2];
+                const sEdgesY = [sy - sh / 2, sy + sh / 2];
+                
+                edgesX.forEach(ex => {
+                    sEdgesX.forEach(sex => {
+                        const dist = Math.abs(ex.val - sex);
+                        if (dist < minDistX) {
+                            minDistX = dist;
+                            bestSnapX = sex - (ex.type === "left" ? -w / 2 : w / 2);
+                            matchNodeX = staticNode;
+                        }
+                    });
+                });
+                
+                edgesY.forEach(ey => {
+                    sEdgesY.forEach(sey => {
+                        const dist = Math.abs(ey.val - sey);
+                        if (dist < minDistY) {
+                            minDistY = dist;
+                            bestSnapY = sey - (ey.type === "top" ? -h / 2 : h / 2);
+                            matchNodeY = staticNode;
+                        }
+                    });
+                });
+            });
+            
+            if (bestSnapX !== null) {
+                snapOffsetX = bestSnapX - tx;
+                const nx = tx + snapOffsetX;
+                const sEdgesX = [matchNodeX.x - matchNodeX.width / 2, matchNodeX.x + matchNodeX.width / 2];
+                const matchX = Math.abs((nx - w / 2) - sEdgesX[0]) < 1 ? sEdgesX[0] : 
+                              (Math.abs((nx - w / 2) - sEdgesX[1]) < 1 ? sEdgesX[1] : 
+                              (Math.abs((nx + w / 2) - sEdgesX[0]) < 1 ? sEdgesX[0] : sEdgesX[1]));
+                guidesToDraw.push({ x1: matchX, y1: Math.min(ty, matchNodeX.y) - 50, x2: matchX, y2: Math.max(ty, matchNodeX.y) + 50 });
+            }
+            if (bestSnapY !== null) {
+                snapOffsetY = bestSnapY - ty;
+                const ny = ty + snapOffsetY;
+                const sEdgesY = [matchNodeY.y - matchNodeY.height / 2, matchNodeY.y + matchNodeY.height / 2];
+                const matchY = Math.abs((ny - h / 2) - sEdgesY[0]) < 1 ? sEdgesY[0] : 
+                              (Math.abs((ny - h / 2) - sEdgesY[1]) < 1 ? sEdgesY[1] : 
+                              (Math.abs((ny + h / 2) - sEdgesY[0]) < 1 ? sEdgesY[0] : sEdgesY[1]));
+                guidesToDraw.push({ x1: Math.min(tx, matchNodeY.x) - 50, y1: matchY, x2: Math.max(tx, matchNodeY.x) + 50, y2: matchY });
+            }
+        }
+
+        draggedSelection.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            nodes[nodeId].x = tentativePositions[nodeId].x + snapOffsetX;
+            nodes[nodeId].y = tentativePositions[nodeId].y + snapOffsetY;
 
             const nodeEl = document.getElementById("node-" + nodeId);
             if (nodeEl) {
@@ -1332,7 +1424,14 @@ function handleGlobalPointerMove(e) {
                 nodeEl.style.top = `${nodes[nodeId].y}px`;
             }
         });
+        
         renderConnectors();
+        
+        if (svgAlignmentGuides) {
+            svgAlignmentGuides.innerHTML = guidesToDraw.map(g => 
+                `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" class="alignment-guide" />`
+            ).join("");
+        }
     } else if (resizingNodeId && nodes[resizingNodeId]) {
         // Resize shape node
         const coords = screenToCanvas(e.clientX, e.clientY);
@@ -1488,6 +1587,7 @@ function handleGlobalPointerUp(e) {
         });
         draggingNodeId = null;
         dragStartNodePositions = {};
+        if (svgAlignmentGuides) svgAlignmentGuides.innerHTML = "";
         if (didMove) {
             saveHistory();
             saveAutosave();

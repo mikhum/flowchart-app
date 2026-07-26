@@ -2173,3 +2173,12 @@ body.login-page {
 .line-label span[style*="color"] {
     display: inline;
 }
+/* Alignment Guides */
+.alignment-guide {
+    stroke: #f97316;
+    stroke-width: 1px;
+    stroke-dasharray: 4 4;
+    pointer-events: none;
+    opacity: 0.8;
+}
+
