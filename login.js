@@ -40,10 +40,17 @@ function persistDriveSession(state) {
         localStorage.removeItem(FLOWCRAFT_DRIVE_SESSION_KEY);
         return;
     }
+
+    // Security hardening:
+    // Never persist OAuth access tokens in localStorage.
+    // Keep only minimal, non-sensitive session hints.
     localStorage.setItem(FLOWCRAFT_DRIVE_SESSION_KEY, JSON.stringify({
         createdAt: Date.now(),
-        accessToken: state.accessToken,
-        userProfile: state.userProfile
+        userProfile: {
+            email: state.userProfile?.email || "",
+            name: state.userProfile?.name || "",
+            picture: state.userProfile?.picture || ""
+        }
     }));
 }
 
