@@ -1,3 +1,402 @@
+// FlowCraft - Core Flowchart & Infrastructure Engine
+const APP_BUILD = "login-separated";
+const BUILD_INFO_PATH = "build-info.json";
+const FLOWCRAFT_EDITOR_BOOT_PREFIX = "flowcraft_editor_boot:";
+const FLOWCRAFT_DRIVE_SESSION_KEY = "flowcraft_drive_session";
+const FLOWCRAFT_DRIVE_SESSION_TTL_MS = 1000 * 60 * 2; // 2 minutes (short-lived handoff token)
+
+// --- Application State ---
+let nodes = {};
+let lines = [];
+
+// Selection states
+let selectedId = null; 
+let selectedType = null; // 'node' | 'line'
+let selectedNodeIds = new Set();
+let copiedElement = null; // { type: 'node' | 'line', payload: object }
+let pasteSerial = 0;
+
+// Camera Viewport Panning and Zooming
+let viewportTransform = { x: 0, y: 0, scale: 1 };
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let panOffset = { x: 0, y: 0 };
+let isMarqueeSelecting = false;
+let marqueeStartMouse = { x: 0, y: 0 };
+let marqueeStartCanvas = { x: 0, y: 0 };
+let marqueeCurrentCanvas = { x: 0, y: 0 };
+let marqueeMoved = false;
+let marqueeAdditive = false;
+let marqueeBaseSelection = new Set();
+
+// Node drag and resize states
+let draggingNodeId = null;
+let dragStartMouse = { x: 0, y: 0 };
+let dragStartNodePos = { x: 0, y: 0 };
+let dragDelta = { x: 0, y: 0 };
+let dragStartNodePositions = {};
+
+let resizingNodeId = null;
+let resizeStartMouse = { x: 0, y: 0 };
+let resizeStartNodeSize = { width: 0, height: 0 };
+
+// Text label drag states
+let draggingTextNodeId = null;
+let dragStartTextOffset = { x: 0, y: 0 };
+
+// Line creation states
+let activePortNodeId = null;
+let activePortName = null; // 'top' | 'right' | 'bottom' | 'left'
+let lineDrawingMousePos = null;
+let hoveredPortNodeId = null;
+let hoveredPortName = null;
+let draggingLineEnd = null; // { lineId: string, end: 'from' | 'to' }
+let lineEndSnapTarget = null; // { nodeId: string, portName: string } | null
+let draggingLineRouteId = null;
+let lineRouteDragStartWaypoint = null;
+let lineEndDragMoved = false;
+let draggingStandaloneLineId = null;
+let draggingStandaloneLineIds = [];
+let lineDragStartCanvas = { x: 0, y: 0 };
+let lineDragStartFrom = {};
+let lineDragStartTo = {};
+let lineDragStartWaypoint = {};
+let lineDragMoved = false;
+let draggingLineLabelId = null;
+let lineLabelDragStartMouse = { x: 0, y: 0 };
+let lineLabelDragStartOffset = { x: 0, y: 0 };
+let lineLabelDragMoved = false;
+let lineLabelDragStarted = false;
+let editingLineLabelId = null;
+
+// Snap to grid
+let snapGridEnabled = true;
+const GRID_SIZE = 20;
+
+// Document Title & Local Saves
+let currentDocName = "Untitled Flowchart";
+let currentLocalSaveName = "";
+let currentDriveFileId = null; // Google Drive File ID
+let currentImageLibraryDriveFileId = "";
+let jsonExportFileHandle = null;
+const DRIVE_AUTOSAVE_INTERVAL_MS = 15000;
+let driveAutosaveTimer = null;
+let driveAutosaveInFlight = false;
+let lastDriveSavedFingerprint = "";
+let driveAutosaveHeartbeat = null;
+
+// Google OAuth & GIS States
+const configuredGoogleClientId = (
+    window.FLOWCRAFT_CONFIG &&
+    typeof window.FLOWCRAFT_CONFIG.googleClientId === "string"
+) ? window.FLOWCRAFT_CONFIG.googleClientId.trim() : "";
+const configuredAllowedOrigins = Array.isArray(window.FLOWCRAFT_CONFIG?.allowedOrigins)
+    ? window.FLOWCRAFT_CONFIG.allowedOrigins
+        .map((origin) => String(origin || "").trim())
+        .filter(Boolean)
+    : [];
+const allowLocalClientIdOverride = !!window.FLOWCRAFT_CONFIG?.allowLocalClientIdOverride;
+const startupDebugEnabled = !!window.FLOWCRAFT_CONFIG?.debugStartupMode;
+
+function getStoredLocalGoogleClientId() {
+    return String(localStorage.getItem("flowcraft_google_client_id") || "").trim();
+}
+
+function getEffectiveGoogleClientId() {
+    const localClientId = getStoredLocalGoogleClientId();
+    // Config-first by default. Local override can supersede only when explicitly enabled.
+    if (allowLocalClientIdOverride && localClientId) return localClientId;
+    if (configuredGoogleClientId) return configuredGoogleClientId;
+    return localClientId;
+}
+
+let googleClientId = getEffectiveGoogleClientId();
+let accessToken = "";
+let userProfile = null;
+let tokenClient = null;
+const ALLOWED_GOOGLE_DOMAIN = "hummel.se";
+
+function logStartup(message) {
+    if (!startupDebugEnabled) return;
+    console.info("[FlowCraft startup]", message);
+}
+
+function showStartupDebugStatus(pathLabel) {
+    if (!startupDebugEnabled || !saveStatus) return;
+    const message = `Startup debug: ${pathLabel}`;
+    if (saveStatus.textContent && saveStatus.textContent.trim()) {
+        saveStatus.textContent = `${saveStatus.textContent} | ${message}`;
+        return;
+    }
+    saveStatus.textContent = message;
+}
+
+function isValidGoogleClientId(clientId) {
+    return /^[a-zA-Z0-9-]+\.apps\.googleusercontent\.com$/.test(String(clientId || "").trim());
+}
+
+function isTrustedRuntimeOrigin() {
+    if (configuredAllowedOrigins.length === 0) return true;
+    return configuredAllowedOrigins.includes(window.location.origin);
+}
+
+function ensureTrustedOriginForGoogle() {
+    if (isTrustedRuntimeOrigin()) return true;
+
+    alert("Google OAuth is disabled on this origin. Configure allowedOrigins in app-config.js and Google Cloud OAuth origins.");
+    return false;
+}
+
+function updateGoogleSecurityState() {
+    const trustedOrigin = isTrustedRuntimeOrigin();
+    if (trustedOrigin) return;
+
+    googleClientId = "";
+    accessToken = "";
+    tokenClient = null;
+
+    if (btnGoogleSignIn) btnGoogleSignIn.disabled = true;
+    if (btnSaveGdrive) btnSaveGdrive.disabled = true;
+    if (btnOpenGdrive) btnOpenGdrive.disabled = true;
+
+    const profileCard = document.getElementById("user-profile");
+    const signInContainer = document.getElementById("google-sign-in-btn");
+    const driveActions = document.getElementById("gdrive-actions");
+    if (profileCard) profileCard.style.display = "none";
+    if (signInContainer) signInContainer.style.display = "none";
+    if (driveActions) driveActions.style.display = "none";
+
+    saveStatus.textContent = "OAuth disabled on this origin";
+}
+
+function updateGoogleConfigUiState() {
+    if (!inputClientId || !btnSaveConfig || !btnClearConfig) return;
+
+    const hasSharedConfig = !!configuredGoogleClientId;
+    const overrideEnabled = allowLocalClientIdOverride;
+
+    if (hasSharedConfig && !overrideEnabled) {
+        inputClientId.value = configuredGoogleClientId;
+        inputClientId.readOnly = true;
+        inputClientId.disabled = true;
+        btnSaveConfig.disabled = true;
+        btnClearConfig.disabled = true;
+        return;
+    }
+
+    inputClientId.readOnly = false;
+    inputClientId.disabled = false;
+    btnSaveConfig.disabled = false;
+    btnClearConfig.disabled = false;
+}
+
+function isAllowedGoogleDomain(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    const email = String(payload.email || "").toLowerCase();
+    const hd = String(payload.hd || "").toLowerCase();
+    return hd === ALLOWED_GOOGLE_DOMAIN || email.endsWith("@" + ALLOWED_GOOGLE_DOMAIN);
+}
+
+// History Stack for Undo/Redo
+let undoStack = [];
+let redoStack = [];
+const MAX_HISTORY = 50;
+
+// Color presets
+const BG_COLORS = [
+    "#ffffff", "#f8fafc", "#f1f5f9", "#e2e8f0", "#e0f2fe", "#e0f7fa", 
+    "#d1fae5", "#fef3c7", "#ffe4e6", "#f3e8ff", "#fae8ff", "#e0e7ff"
+];
+const BORDER_COLORS = [
+    "#64748b", "#334155", "#0f172a", "#0ea5e9", "#0891b2", "#10b981", 
+    "#f59e0b", "#f43f5e", "#8b5cf6", "#d946ef", "#4f46e5", "#cbd5e1"
+];
+const TEXT_COLORS = [
+    "#0f172a", "#334155", "#ffffff", "#ef4444", "#f97316", "#eab308",
+    "#22c55e", "#0ea5e9", "#8b5cf6", "#d946ef", "#4f46e5", "#10b981"
+];
+
+const DEFAULT_LINE_SETTINGS_KEY = "flowcraft_default_line_settings";
+const DEFAULT_LINE_SETTINGS = {
+    lineType: "orthogonal",
+    lineStyle: "solid",
+    color: "#64748b",
+    thickness: 2.5,
+    hasArrow: "end"
+};
+let defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+const IMAGE_LIBRARY_STORAGE_KEY = "flowcraft_image_library";
+const MAX_IMAGE_LIBRARY_ITEMS = 80;
+const IMAGE_LIBRARY_DRIVE_FILE_ID_KEY = "flowcraft_image_library_drive_file_id";
+const IMAGE_LIBRARY_DRIVE_FILENAME = "flowcraft-image-library.json";
+
+function resolveCssColorVar(varName, fallback) {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    return value || fallback;
+}
+
+function loadDefaultLineSettings() {
+    try {
+        const raw = localStorage.getItem(DEFAULT_LINE_SETTINGS_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return;
+        defaultLineSettings = {
+            lineType: parsed.lineType || DEFAULT_LINE_SETTINGS.lineType,
+            lineStyle: parsed.lineStyle || DEFAULT_LINE_SETTINGS.lineStyle,
+            color: parsed.color || DEFAULT_LINE_SETTINGS.color,
+            thickness: Number.isFinite(Number(parsed.thickness)) ? Number(parsed.thickness) : DEFAULT_LINE_SETTINGS.thickness,
+            hasArrow: parsed.hasArrow || DEFAULT_LINE_SETTINGS.hasArrow
+        };
+    } catch (err) {
+        defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+    }
+}
+
+function saveDefaultLineSettings() {
+    localStorage.setItem(DEFAULT_LINE_SETTINGS_KEY, JSON.stringify(defaultLineSettings));
+}
+
+// --- DOM References ---
+const workspace = document.getElementById("workspace");
+const canvas = document.getElementById("canvas");
+const nodesContainer = document.getElementById("nodes-container");
+const svgOverlayBack = document.getElementById("svg-overlay-back");
+const svgOverlayFront = document.getElementById("svg-overlay-front");
+const svgOverlayHit = document.getElementById("svg-overlay-hit");
+const svgAlignmentGuides = document.getElementById("svg-alignment-guides");
+const lineHandlesLayer = document.getElementById("line-handles-layer");
+const nodeHandlesLayer = document.getElementById("node-handles-layer");
+const marqueeSelectionBox = document.getElementById("marquee-selection-box");
+const zoomIndicator = document.getElementById("zoom-indicator");
+const docTitle = document.getElementById("doc-title");
+const saveStatus = document.getElementById("save-status");
+const buildId = document.getElementById("build-id");
+
+// Sidebars & Properties
+const sidebar = document.getElementById("sidebar");
+const btnHideSidebar = document.getElementById("hide-sidebar");
+const btnShowSidebar = document.getElementById("show-sidebar");
+const propertiesPanel = document.getElementById("properties-panel");
+const closeProperties = document.getElementById("close-properties");
+
+// Control buttons
+const ctrlZoomIn = document.getElementById("ctrl-zoom-in");
+const ctrlZoomOut = document.getElementById("ctrl-zoom-out");
+const ctrlResetView = document.getElementById("ctrl-reset-view");
+const ctrlHelp = document.getElementById("ctrl-help");
+const btnUndo = document.getElementById("btn-undo");
+const btnRedo = document.getElementById("btn-redo");
+const btnAlignLeft = document.getElementById("btn-align-left");
+const btnAlignCenterH = document.getElementById("btn-align-center-h");
+const btnAlignRight = document.getElementById("btn-align-right");
+const btnAlignTop = document.getElementById("btn-align-top");
+const btnAlignMiddleV = document.getElementById("btn-align-middle-v");
+const btnAlignBottom = document.getElementById("btn-align-bottom");
+const btnSnapGrid = document.getElementById("btn-snap-grid");
+const btnClearCanvas = document.getElementById("btn-clear-canvas");
+
+// Import/Export
+const btnExportPDF = document.getElementById("btn-export-pdf");
+const btnExportJson = document.getElementById("btn-export-json");
+const btnImportJson = document.getElementById("btn-import-json");
+const fileImportInput = document.getElementById("file-import-input");
+
+// Local Workspaces
+const btnNewFlowchart = document.getElementById("btn-new-flowchart");
+const btnSaveLocal = document.getElementById("btn-save-local");
+const localFilesList = document.getElementById("local-files-list");
+const btnSaveSelectedImageLibrary = document.getElementById("btn-save-selected-image-library");
+const btnAddImageLibraryFile = document.getElementById("btn-add-image-library-file");
+const btnSaveImageLibraryDrive = document.getElementById("btn-save-image-library-drive");
+const btnLoadImageLibraryDrive = document.getElementById("btn-load-image-library-drive");
+const imageLibraryFileInput = document.getElementById("image-library-file-input");
+const imageLibraryList = document.getElementById("image-library-list");
+
+// Modals
+const helpModal = document.getElementById("help-modal");
+const btnCloseHelp = document.getElementById("btn-close-help");
+const closeHelpModal = document.getElementById("close-help-modal");
+
+const googleConfigModal = document.getElementById("google-config-modal");
+const btnConfigureGoogle = document.getElementById("btn-configure-google");
+const btnGoogleSignIn = document.getElementById("btn-google-sign-in");
+const closeConfigModal = document.getElementById("close-config-modal");
+const btnSaveConfig = document.getElementById("btn-save-config");
+const btnClearConfig = document.getElementById("btn-clear-config");
+const inputClientId = document.getElementById("google-client-id");
+
+const gdriveExplorerModal = document.getElementById("gdrive-explorer-modal");
+const btnOpenGdrive = document.getElementById("btn-open-gdrive");
+const btnSaveGdrive = document.getElementById("btn-save-gdrive");
+const closeGdriveModal = document.getElementById("close-gdrive-modal");
+const btnCloseGdriveExplorer = document.getElementById("btn-close-gdrive-explorer");
+const gdriveFilesContainer = document.getElementById("gdrive-files-container");
+
+// Properties Panel inputs
+const propNodeSection = document.getElementById("prop-node-section");
+const propLineSection = document.getElementById("prop-line-section");
+const propText = document.getElementById("prop-text");
+const propTextSize = document.getElementById("prop-text-size");
+const propUrl = document.getElementById("prop-url");
+const propTextPosition = document.getElementById("prop-text-position");
+const propNodeWidth = document.getElementById("prop-node-width");
+const propNodeHeight = document.getElementById("prop-node-height");
+const propImageCropGroup = document.getElementById("prop-image-crop-group");
+const propCropLeft = document.getElementById("prop-crop-left");
+const propCropTop = document.getElementById("prop-crop-top");
+const propCropRight = document.getElementById("prop-crop-right");
+const propCropBottom = document.getElementById("prop-crop-bottom");
+const btnResetCrop = document.getElementById("btn-reset-crop");
+const propBorderWidth = document.getElementById("prop-border-width");
+const propBorderStyle = document.getElementById("prop-border-style");
+const propLineType = document.getElementById("prop-line-type");
+const propLineStyle = document.getElementById("prop-line-style");
+const propLineWidth = document.getElementById("prop-line-width");
+const propLineArrows = document.getElementById("prop-line-arrows");
+const propLineText = document.getElementById("prop-line-text");
+const propLineTextSize = document.getElementById("prop-line-text-size");
+const propTextBold = document.getElementById("prop-text-bold");
+const propLineTextBold = document.getElementById("prop-line-text-bold");
+const propTextColorPicker = document.getElementById("prop-textcolor-picker");
+const propTextColorGrid = document.getElementById("prop-textcolor-grid");
+const propLineTextColorPicker = document.getElementById("prop-line-textcolor-picker");
+const propLineTextColorGrid = document.getElementById("prop-line-textcolor-grid");
+const btnSetDefaultLine = document.getElementById("btn-set-default-line");
+const btnResetDefaultLine = document.getElementById("btn-reset-default-line");
+const btnLineBringFront = document.getElementById("btn-line-bring-front");
+const btnLineSendBack = document.getElementById("btn-line-send-back");
+const btnDeleteSelected = document.getElementById("btn-delete-selected");
+
+// --- Initialization ---
+function setBuildBadgeLabel(label) {
+    if (buildId) buildId.textContent = label;
+}
+
+async function updateBuildBadge() {
+    setBuildBadgeLabel(`Commit ${APP_BUILD}`);
+
+    try {
+        const response = await fetch(`${BUILD_INFO_PATH}?v=${encodeURIComponent(APP_BUILD)}`, {
+            cache: "no-store"
+        });
+        if (!response.ok) return;
+
+        const buildInfo = await response.json();
+        const shortSha = typeof buildInfo?.shortSha === "string" ? buildInfo.shortSha.trim() : "";
+        if (!shortSha) return;
+
+        setBuildBadgeLabel(`Commit ${shortSha}`);
+        console.info("FlowCraft build:", shortSha);
+        return;
+    } catch (err) {
+        console.warn("Unable to load build metadata.", err);
+    }
+
+    console.info("FlowCraft build:", APP_BUILD);
+}
+
+// --- Drive Session Hydration (from login page handoff) ---
 function hydrateDriveSession() {
     try {
         const raw = localStorage.getItem(FLOWCRAFT_DRIVE_SESSION_KEY);
@@ -35,3 +434,5982 @@ function hydrateDriveSession() {
         accessToken = "";
     }
 }
+
+// --- Editor Boot Payload (flowchart loaded from login page) ---
+function consumeEditorBootPayload() {
+    const params = new URLSearchParams(window.location.search);
+    const bootKey = params.get("bootKey");
+    if (!bootKey) return false;
+
+    const storageKey = FLOWCRAFT_EDITOR_BOOT_PREFIX + bootKey;
+    try {
+        const raw = localStorage.getItem(storageKey);
+        localStorage.removeItem(storageKey);
+
+        // Clean bootKey from URL so refresh doesn't try to reload it
+        const url = new URL(window.location.href);
+        url.searchParams.delete("bootKey");
+        window.history.replaceState({}, document.title, url.toString());
+
+        if (!raw) return false;
+        const payload = JSON.parse(raw);
+        if (!payload || !payload.content) return false;
+
+        currentDriveFileId = payload.fileId || null;
+        currentLocalSaveName = "";
+        loadSessionData(payload.content);
+        return true;
+    } catch (err) {
+        return false;
+    }
+}
+
+function consumeEditorMode() {
+    const url = new URL(window.location.href);
+    const mode = (url.searchParams.get("mode") || "").trim().toLowerCase();
+    if (!mode) return "";
+
+    // Consume mode once so browser refresh does not re-trigger startup mode logic.
+    url.searchParams.delete("mode");
+    window.history.replaceState({}, document.title, url.toString());
+    return mode;
+}
+
+function init() {
+    currentImageLibraryDriveFileId = String(localStorage.getItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY) || "");
+    updateBuildBadge();
+    updateGoogleConfigUiState();
+    hydrateDriveSession();
+    loadDefaultLineSettings();
+    setupEventListeners();
+    updateGoogleSecurityState();
+    setupColorPickers();
+    loadImageLibraryList();
+    loadLocalFilesList();
+
+    // Set snap grid button state
+    updateSnapGridButtonState();
+
+    // Honor explicit startup mode from login page.
+    const startupMode = consumeEditorMode();
+
+    let startupPathLabel = "template-default";
+
+    // If opened with mode=new, always start clean and skip autosave restore.
+    if (startupMode === "new") {
+        logStartup("mode=new detected; creating clean template and skipping autosave restore");
+        createStartingTemplate();
+        currentLocalSaveName = "";
+        currentDriveFileId = null;
+        startupPathLabel = "mode=new";
+        // Persist clean startup immediately so a browser refresh cannot revive stale autosave data.
+        saveAutosave();
+    } else if (!consumeEditorBootPayload()) {
+        // If opened from login with a boot payload, use that; otherwise restore autosave.
+        const lastSession = localStorage.getItem("flowcraft_autosave");
+        if (lastSession) {
+            try {
+                logStartup("restoring from autosave");
+                loadSessionData(JSON.parse(lastSession));
+                startupPathLabel = "autosave";
+            } catch (e) {
+                logStartup("autosave parse failed; creating clean template");
+                createStartingTemplate();
+                startupPathLabel = "autosave-invalid-template";
+            }
+        } else {
+            logStartup("no autosave found; creating clean template");
+            createStartingTemplate();
+            startupPathLabel = "no-autosave-template";
+        }
+    } else {
+        logStartup("boot payload consumed from login handoff");
+        startupPathLabel = "boot-payload";
+    }
+
+    showStartupDebugStatus(startupPathLabel);
+
+    // Apply hydrated Drive session to UI
+    if (userProfile) {
+        document.getElementById("google-sign-in-btn").style.display = "none";
+        const profileCard = document.getElementById("user-profile");
+        if (profileCard) {
+            profileCard.style.display = "flex";
+            const av = document.getElementById("user-avatar");
+            const nm = document.getElementById("user-name");
+            const em = document.getElementById("user-email");
+            if (av) av.src = userProfile.picture || "";
+            if (nm) nm.textContent = userProfile.name || "Signed in";
+            if (em) em.textContent = userProfile.email || "";
+        }
+        if (accessToken) {
+            const da = document.getElementById("gdrive-actions");
+            if (da) da.style.display = "flex";
+        }
+    }
+
+    // Google GIS Auto login check
+    if (googleClientId && isTrustedRuntimeOrigin()) {
+        inputClientId.value = googleClientId;
+        initGoogleClient();
+    }
+
+    if (currentDriveFileId && accessToken) {
+        lastDriveSavedFingerprint = JSON.stringify(getExportPayload());
+    }
+
+    saveHistory(); // initial state
+    render();
+    centerCanvas();
+    startDriveAutosaveHeartbeat();
+}
+
+function createStartingTemplate() {
+    nodes = {
+        "start_node": {
+            id: "start_node",
+            type: "shape",
+            shapeType: "terminator",
+            x: 0,
+            y: -100,
+            width: 140,
+            height: 50,
+            text: "Start Process",
+            textOffset: { x: 0, y: 0 },
+            textSize: 14,
+            bgColor: "#e0f2fe",
+            borderColor: "#0ea5e9",
+            borderWidth: 2,
+            borderStyle: "solid",
+            url: ""
+        },
+        "process_node": {
+            id: "process_node",
+            type: "shape",
+            shapeType: "rectangle",
+            x: 0,
+            y: 60,
+            width: 150,
+            height: 60,
+            text: "Double click to edit\nDrag ports to link",
+            textOffset: { x: 0, y: 0 },
+            textSize: 13,
+            bgColor: "#ffffff",
+            borderColor: "#64748b",
+            borderWidth: 2,
+            borderStyle: "solid",
+            url: ""
+        }
+    };
+    lines = [
+        {
+            id: "line_start",
+            fromId: "start_node",
+            fromPort: "bottom",
+            toId: "process_node",
+            toPort: "top",
+            lineType: "orthogonal",
+            lineStyle: "solid",
+            color: "#64748b",
+            thickness: 2.5,
+            hasArrow: "end"
+        }
+    ];
+    currentDocName = "Process Workflow";
+    docTitle.textContent = currentDocName;
+}
+
+function centerCanvas() {
+    const rect = workspace.getBoundingClientRect();
+    viewportTransform.x = rect.width / 2;
+    viewportTransform.y = rect.height / 2;
+    viewportTransform.scale = 1.0;
+    updateCanvasTransform();
+}
+
+// --- Coordinate Conversions ---
+function screenToCanvas(clientX, clientY) {
+    const rect = workspace.getBoundingClientRect();
+    return {
+        x: (clientX - rect.left - viewportTransform.x) / viewportTransform.scale,
+        y: (clientY - rect.top - viewportTransform.y) / viewportTransform.scale
+    };
+}
+
+function snap(val) {
+    return snapGridEnabled ? Math.round(val / GRID_SIZE) * GRID_SIZE : Math.round(val);
+}
+
+// --- Color Pickers Setup ---
+function buildSwatchGrid(grid, colors, onClickFn) {
+    grid.innerHTML = "";
+    colors.forEach(color => {
+        const swatch = document.createElement("div");
+        swatch.className = "color-swatch";
+        swatch.style.backgroundColor = color;
+        swatch.dataset.color = color;
+        swatch.addEventListener("mousedown", (e) => e.preventDefault());
+        swatch.addEventListener("click", () => onClickFn(color));
+        grid.appendChild(swatch);
+    });
+}
+
+function setupColorPickers() {
+    const bgGrid = document.getElementById("prop-bgcolor-grid");
+    const borderGrid = document.getElementById("prop-bordercolor-grid");
+    const lineGrid = document.getElementById("prop-linecolor-grid");
+
+    buildSwatchGrid(bgGrid, BG_COLORS, selectBgColor);
+    buildSwatchGrid(borderGrid, BORDER_COLORS, selectBorderColor);
+    buildSwatchGrid(lineGrid, BORDER_COLORS, selectLineColor);
+
+    // Text color grids
+    if (propTextColorGrid) buildSwatchGrid(propTextColorGrid, TEXT_COLORS, (color) => applyTextColorToSelection(color, "node"));
+    if (propLineTextColorGrid) buildSwatchGrid(propLineTextColorGrid, TEXT_COLORS, (color) => applyTextColorToSelection(color, "line"));
+}
+
+function selectBgColor(color) {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].bgColor = color;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        updatePropertiesPanel();
+    }
+}
+
+function selectBorderColor(color) {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderColor = color;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        updatePropertiesPanel();
+    }
+}
+
+function selectLineColor(color) {
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.color = color;
+        });
+        saveHistory();
+        render();
+        updatePropertiesPanel();
+    }
+}
+
+// --- Event Listeners ---
+function setupEventListeners() {
+    // Zooming (Wheel)
+    workspace.addEventListener("wheel", handleWheel, { passive: false });
+    workspace.addEventListener("contextmenu", handleWorkspaceContextMenu);
+
+    // Workspace Panning & Click Off
+    workspace.addEventListener("pointerdown", handleWorkspacePointerDown);
+    window.addEventListener("pointermove", handleGlobalPointerMove);
+    window.addEventListener("pointerup", handleGlobalPointerUp);
+    window.addEventListener("pointercancel", handleGlobalPointerUp);
+    window.addEventListener("blur", handleGlobalPointerAbort);
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) handleGlobalPointerAbort();
+    });
+    
+    // Drag and Drop from Sidebar Library
+    const paletteItems = document.querySelectorAll(".palette-item");
+    paletteItems.forEach(item => {
+        item.addEventListener("dragstart", handleLibraryDragStart);
+    });
+    
+    // Canvas Drop Events
+    workspace.addEventListener("dragover", e => e.preventDefault());
+    workspace.addEventListener("drop", handleCanvasDrop);
+
+    // Keyboard Shortcuts
+    window.addEventListener("keydown", handleKeyDown);
+    
+    // Title Input
+    docTitle.addEventListener("blur", () => {
+        const newName = docTitle.textContent.trim();
+        if (newName && newName !== currentDocName) {
+            currentDocName = newName;
+            saveHistory();
+            saveAutosave();
+        } else {
+            docTitle.textContent = currentDocName;
+        }
+    });
+    docTitle.addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            docTitle.blur();
+        }
+    });
+
+    // Sidebar Toggles
+    btnHideSidebar.addEventListener("click", () => {
+        sidebar.classList.add("hidden");
+        btnShowSidebar.style.display = "flex";
+    });
+    btnShowSidebar.addEventListener("click", () => {
+        sidebar.classList.remove("hidden");
+        btnShowSidebar.style.display = "none";
+    });
+    
+    // View controls
+    ctrlZoomIn.addEventListener("click", () => zoom(1.15));
+    ctrlZoomOut.addEventListener("click", () => zoom(0.85));
+    ctrlResetView.addEventListener("click", centerCanvas);
+    ctrlHelp.addEventListener("click", () => showHelpModal(true));
+    
+    // Tool buttons
+    btnUndo.addEventListener("click", undo);
+    btnRedo.addEventListener("click", redo);
+    btnAlignLeft.addEventListener("click", () => alignSelectedNodes("left"));
+    btnAlignCenterH.addEventListener("click", () => alignSelectedNodes("center"));
+    btnAlignRight.addEventListener("click", () => alignSelectedNodes("right"));
+    btnAlignTop.addEventListener("click", () => alignSelectedNodes("top"));
+    btnAlignMiddleV.addEventListener("click", () => alignSelectedNodes("middle"));
+    btnAlignBottom.addEventListener("click", () => alignSelectedNodes("bottom"));
+    btnSnapGrid.addEventListener("click", toggleSnapGrid);
+    btnClearCanvas.addEventListener("click", handleClearCanvas);
+    
+    // Local workspace manager
+    btnNewFlowchart.addEventListener("click", handleNewFlowchart);
+    btnSaveLocal.addEventListener("click", handleSaveLocal);
+    btnSaveSelectedImageLibrary.addEventListener("click", saveSelectedImageToLibrary);
+    btnAddImageLibraryFile.addEventListener("click", () => imageLibraryFileInput.click());
+    btnSaveImageLibraryDrive.addEventListener("click", () => saveImageLibraryToDrive({ silent: false }));
+    btnLoadImageLibraryDrive.addEventListener("click", loadImageLibraryFromDrive);
+    imageLibraryFileInput.addEventListener("change", handleImageLibraryFilePick);
+    
+    // Document Exports
+    btnExportPDF.addEventListener("click", exportToPDF);
+    btnExportJson.addEventListener("click", exportJsonFile);
+    btnImportJson.addEventListener("click", () => {
+        fileImportInput.click();
+    });
+    fileImportInput.addEventListener("change", importJsonFile);
+
+    // Modals buttons
+    closeHelpModal.addEventListener("click", () => showHelpModal(false));
+    btnCloseHelp.addEventListener("click", () => showHelpModal(false));
+    
+    if (btnConfigureGoogle) btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
+    if (btnGoogleSignIn) btnGoogleSignIn.addEventListener("click", startGoogleSignIn);
+    closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
+    btnSaveConfig.addEventListener("click", saveGoogleConfig);
+    btnClearConfig.addEventListener("click", clearGoogleConfig);
+    
+    if (btnOpenGdrive) btnOpenGdrive.addEventListener("click", openGoogleDriveExplorer);
+    btnSaveGdrive.addEventListener("click", saveToGoogleDrive);
+    closeGdriveModal.addEventListener("click", () => showGdriveExplorer(false));
+    btnCloseGdriveExplorer.addEventListener("click", () => showGdriveExplorer(false));
+
+    // Properties panel bindings
+    closeProperties.addEventListener("click", () => selectElement(null));
+    propText.addEventListener("input", updateSelectedNodeText);
+    propTextSize.addEventListener("input", updateSelectedNodeTextSize);
+    if (propTextBold) {
+        propTextBold.addEventListener("mousedown", (e) => e.preventDefault());
+        propTextBold.addEventListener("click", toggleSelectedNodeBold);
+    }
+    propText.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            toggleSelectedNodeBold();
+        }
+    });
+    propUrl.addEventListener("input", updateSelectedNodeUrl);
+    propTextPosition.addEventListener("change", updateSelectedNodeTextPosition);
+    propNodeWidth.addEventListener("change", updateSelectedNodeWidth);
+    propNodeHeight.addEventListener("change", updateSelectedNodeHeight);
+    propCropLeft.addEventListener("input", updateSelectedNodeCrop);
+    propCropTop.addEventListener("input", updateSelectedNodeCrop);
+    propCropRight.addEventListener("input", updateSelectedNodeCrop);
+    propCropBottom.addEventListener("input", updateSelectedNodeCrop);
+    btnResetCrop.addEventListener("click", resetSelectedNodeCrop);
+    propBorderWidth.addEventListener("change", updateSelectedNodeBorderWidth);
+    propBorderStyle.addEventListener("change", updateSelectedNodeBorderStyle);
+    
+    propLineType.addEventListener("change", updateSelectedLineType);
+    propLineStyle.addEventListener("change", updateSelectedLineStyle);
+    propLineWidth.addEventListener("change", updateSelectedLineThickness);
+    propLineArrows.addEventListener("change", updateSelectedLineArrows);
+    propLineText.addEventListener("input", updateSelectedLineText);
+    propLineText.addEventListener("change", commitSelectedLineText);
+    propLineText.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            toggleSelectedLineBold();
+        }
+    });
+    propLineTextSize.addEventListener("change", updateSelectedLineTextSize);
+    if (propLineTextBold) {
+        propLineTextBold.addEventListener("mousedown", (e) => e.preventDefault());
+        propLineTextBold.addEventListener("click", toggleSelectedLineBold);
+    }
+    btnLineBringFront.addEventListener("click", bringToFront);
+    btnLineSendBack.addEventListener("click", sendToBack);
+    btnSetDefaultLine.addEventListener("click", setSelectedLineAsDefault);
+    btnResetDefaultLine.addEventListener("click", resetDefaultLineSettings);
+    btnDeleteSelected.addEventListener("click", deleteSelectedElement);
+    
+    document.getElementById("btn-bring-front").addEventListener("click", bringToFront);
+    document.getElementById("btn-send-back").addEventListener("click", sendToBack);
+
+    const btnMatchSize = document.getElementById("btn-match-size");
+    if (btnMatchSize) {
+        btnMatchSize.addEventListener("click", () => {
+            if (selectedType !== "node" || selectedNodeIds.size < 2) return;
+            const referenceNodeId = selectedId && nodes[selectedId] ? selectedId : Array.from(selectedNodeIds).find(nodeId => !!nodes[nodeId]);
+            const refNode = nodes[referenceNodeId];
+            if (!refNode) return;
+            
+            selectedNodeIds.forEach(id => {
+                if (id !== referenceNodeId && nodes[id]) {
+                    nodes[id].width = refNode.width;
+                    nodes[id].height = refNode.height;
+                }
+            });
+            saveHistory();
+            saveAutosave();
+            renderNodes();
+            renderConnectors();
+        });
+    }
+
+    // Text color picker custom inputs
+    if (propTextColorPicker) {
+        propTextColorPicker.addEventListener("change", () => {
+            applyTextColorToSelection(propTextColorPicker.value, "node");
+        });
+    }
+    if (propLineTextColorPicker) {
+        propLineTextColorPicker.addEventListener("change", () => {
+            applyTextColorToSelection(propLineTextColorPicker.value, "line");
+        });
+    }
+
+    // Clipboard pasting
+    window.addEventListener("paste", handleClipboardPaste);
+}
+
+// --- Zooming ---
+function handleWheel(e) {
+    e.preventDefault();
+    const zoomFactor = 1.08;
+    const direction = e.deltaY < 0 ? zoomFactor : 1 / zoomFactor;
+    
+    const rect = workspace.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    const canvasMouseX = (mouseX - viewportTransform.x) / viewportTransform.scale;
+    const canvasMouseY = (mouseY - viewportTransform.y) / viewportTransform.scale;
+
+    let newScale = viewportTransform.scale * direction;
+    newScale = Math.max(0.15, Math.min(3.0, newScale));
+
+    viewportTransform.scale = newScale;
+    viewportTransform.x = mouseX - canvasMouseX * newScale;
+    viewportTransform.y = mouseY - canvasMouseY * newScale;
+
+    updateCanvasTransform();
+}
+
+function zoom(factor) {
+    const rect = workspace.getBoundingClientRect();
+    const midX = rect.width / 2;
+    const midY = rect.height / 2;
+    
+    const canvasMidX = (midX - viewportTransform.x) / viewportTransform.scale;
+    const canvasMidY = (midY - viewportTransform.y) / viewportTransform.scale;
+    
+    let newScale = viewportTransform.scale * factor;
+    newScale = Math.max(0.15, Math.min(3.0, newScale));
+    
+    viewportTransform.scale = newScale;
+    viewportTransform.x = midX - canvasMidX * newScale;
+    viewportTransform.y = midY - canvasMidY * newScale;
+    
+    updateCanvasTransform();
+}
+
+function updateCanvasTransform() {
+    canvas.style.transform = `translate(${viewportTransform.x}px, ${viewportTransform.y}px) scale(${viewportTransform.scale})`;
+    zoomIndicator.textContent = `${Math.round(viewportTransform.scale * 100)}%`;
+}
+
+function setMarqueeBoxVisibility(visible) {
+    if (!marqueeSelectionBox) return;
+    marqueeSelectionBox.style.display = visible ? "block" : "none";
+}
+
+function updateMarqueeBox() {
+    if (!marqueeSelectionBox) return;
+    const left = Math.min(marqueeStartCanvas.x, marqueeCurrentCanvas.x);
+    const top = Math.min(marqueeStartCanvas.y, marqueeCurrentCanvas.y);
+    const width = Math.abs(marqueeCurrentCanvas.x - marqueeStartCanvas.x);
+    const height = Math.abs(marqueeCurrentCanvas.y - marqueeStartCanvas.y);
+    marqueeSelectionBox.style.left = `${left}px`;
+    marqueeSelectionBox.style.top = `${top}px`;
+    marqueeSelectionBox.style.width = `${width}px`;
+    marqueeSelectionBox.style.height = `${height}px`;
+}
+
+function getMarqueeRect() {
+    return {
+        left: Math.min(marqueeStartCanvas.x, marqueeCurrentCanvas.x),
+        right: Math.max(marqueeStartCanvas.x, marqueeCurrentCanvas.x),
+        top: Math.min(marqueeStartCanvas.y, marqueeCurrentCanvas.y),
+        bottom: Math.max(marqueeStartCanvas.y, marqueeCurrentCanvas.y)
+    };
+}
+
+function getMarqueeNodeHits() {
+    const rect = getMarqueeRect();
+    const hits = new Set();
+
+    const overlapsRect = (left, right, top, bottom) => !(right < rect.left || left > rect.right || bottom < rect.top || top > rect.bottom);
+
+    Object.values(nodes).forEach(node => {
+        if (!node || node.type === "line-anchor") return;
+
+        const width = Number.isFinite(Number(node.width)) ? Number(node.width) : 120;
+        const height = Number.isFinite(Number(node.height)) ? Number(node.height) : 60;
+        const nodeLeft = node.x - width / 2;
+        const nodeRight = node.x + width / 2;
+        const nodeTop = node.y - height / 2;
+        const nodeBottom = node.y + height / 2;
+        if (overlapsRect(nodeLeft, nodeRight, nodeTop, nodeBottom)) hits.add(node.id);
+    });
+
+    // Include standalone line/bracket objects by adding both of their anchor ids
+    // when the line's geometry overlaps the marquee rectangle.
+    lines.forEach(line => {
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+        const fromCoords = getPortCoords(line.fromId)[line.fromPort];
+        const toCoords = getPortCoords(line.toId)[line.toPort];
+        if (!fromCoords || !toCoords) return;
+
+        let points = [];
+        if (isBraceGlyphType(line.glyphType)) {
+            const geom = getBraceGeometry(line, fromCoords, toCoords);
+            points = [fromCoords, geom.topCorner, geom.center, geom.bottomCorner, toCoords];
+        } else if (line.lineType === "straight") {
+            points = getLineStraightPolyline(line, fromCoords, toCoords);
+        } else if (line.lineType === "curved") {
+            if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+                points = [fromCoords, line.manualWaypoint, toCoords];
+            } else {
+                const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+                const ctrlOffset = Math.min(120, distance * 0.4);
+                const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+                const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+                points = [
+                    fromCoords,
+                    { x: fromCoords.x + ctrl1.x, y: fromCoords.y + ctrl1.y },
+                    { x: toCoords.x + ctrl2.x, y: toCoords.y + ctrl2.y },
+                    toCoords
+                ];
+            }
+        } else {
+            points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+        }
+
+        if (!points || points.length === 0) return;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        points.forEach((p) => {
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y);
+        });
+
+        if (overlapsRect(minX, maxX, minY, maxY)) {
+            hits.add(line.fromId);
+            hits.add(line.toId);
+        }
+    });
+
+    return hits;
+}
+
+function getStandaloneLineIdsFromNodeSelection(nodeIdSet) {
+    const set = nodeIdSet instanceof Set ? nodeIdSet : new Set(nodeIdSet || []);
+    const ids = [];
+    lines.forEach((line) => {
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+        if (!isStandalone) return;
+        if (set.has(line.fromId) && set.has(line.toId)) ids.push(line.id);
+    });
+    return ids;
+}
+
+function getActiveSelectedLineIds() {
+    if (selectedType !== "line") return [];
+    const fromNodeSelection = getStandaloneLineIdsFromNodeSelection(selectedNodeIds);
+    if (fromNodeSelection.length > 0) return fromNodeSelection;
+    return selectedId ? [selectedId] : [];
+}
+
+function isStandaloneLineShape(line) {
+    if (!line) return false;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    return !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+}
+
+function getLineLabelOffset(line) {
+    const x = Number(line?.labelOffset?.x);
+    const y = Number(line?.labelOffset?.y);
+    return {
+        x: Number.isFinite(x) ? x : 0,
+        y: Number.isFinite(y) ? y : -18
+    };
+}
+
+function applyNodeSelection(nodeIds, options = {}) {
+    const validNodeIds = Array.from(nodeIds).filter(nodeId => !!nodes[nodeId]);
+    selectedNodeIds = new Set(validNodeIds);
+    const standaloneLineIds = getStandaloneLineIdsFromNodeSelection(selectedNodeIds);
+    const hasVisibleNodeSelection = validNodeIds.some((nodeId) => nodes[nodeId] && nodes[nodeId].type !== "line-anchor");
+
+    if (standaloneLineIds.length > 0 && !hasVisibleNodeSelection) {
+        selectedType = "line";
+        selectedId = standaloneLineIds[standaloneLineIds.length - 1];
+    } else if (selectedNodeIds.size > 0) {
+        selectedType = "node";
+        selectedId = validNodeIds[validNodeIds.length - 1];
+    } else {
+        selectedType = null;
+        selectedId = null;
+    }
+
+    document.body.classList.toggle("line-edit-mode", selectedType === "line" && !!selectedId);
+    document.body.classList.toggle("node-multi-select-mode", selectedType === "node" && selectedNodeIds.size > 1);
+    Object.keys(nodes).forEach(nodeId => {
+        const el = document.getElementById("node-" + nodeId);
+        if (el) el.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(nodeId));
+    });
+
+    if (!options.silent) {
+        updatePropertiesPanel();
+        renderConnectors();
+    }
+}
+
+function toggleStandaloneLineInNodeSelection(line) {
+    if (!line) return;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+    if (!isStandalone) return;
+
+    const nextSelection = new Set(selectedNodeIds);
+    const isAlreadySelected = nextSelection.has(line.fromId) && nextSelection.has(line.toId);
+
+    if (isAlreadySelected) {
+        nextSelection.delete(line.fromId);
+        nextSelection.delete(line.toId);
+    } else {
+        nextSelection.add(line.fromId);
+        nextSelection.add(line.toId);
+    }
+
+    applyNodeSelection(nextSelection);
+}
+
+function beginStandaloneLineDrag(line, e) {
+    if (!line) return;
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+    const activeSelectedLineIds = getActiveSelectedLineIds();
+    const dragLineIds = activeSelectedLineIds.includes(line.id) && activeSelectedLineIds.length > 1
+        ? activeSelectedLineIds
+        : [line.id];
+
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+    draggingLineRouteId = null;
+    lineRouteDragStartWaypoint = null;
+
+    draggingStandaloneLineId = line.id;
+    draggingStandaloneLineIds = [...dragLineIds];
+    lineDragStartCanvas = screenToCanvas(e.clientX, e.clientY);
+    lineDragStartFrom = {};
+    lineDragStartTo = {};
+    lineDragStartWaypoint = {};
+
+    draggingStandaloneLineIds.forEach((lineId) => {
+        const targetLine = lines.find((l) => l.id === lineId);
+        if (!targetLine) return;
+        const fromAnchor = nodes[targetLine.fromId];
+        const toAnchor = nodes[targetLine.toId];
+        if (!fromAnchor || !toAnchor || fromAnchor.type !== "line-anchor" || toAnchor.type !== "line-anchor") return;
+
+        lineDragStartFrom[lineId] = { x: fromAnchor.x, y: fromAnchor.y, nodeId: targetLine.fromId };
+        lineDragStartTo[lineId] = { x: toAnchor.x, y: toAnchor.y, nodeId: targetLine.toId };
+        lineDragStartWaypoint[lineId] = targetLine.manualWaypoint && Number.isFinite(targetLine.manualWaypoint.x) && Number.isFinite(targetLine.manualWaypoint.y)
+            ? { x: targetLine.manualWaypoint.x, y: targetLine.manualWaypoint.y }
+            : null;
+    });
+
+    lineDragMoved = false;
+}
+
+function updateMarqueeSelection() {
+    const hits = getMarqueeNodeHits();
+    const selection = marqueeAdditive ? new Set([...marqueeBaseSelection, ...hits]) : hits;
+    applyNodeSelection(selection, { silent: true });
+}
+
+// --- Panning & Drag/Drop Pointer Handling ---
+function handleWorkspacePointerDown(e) {
+    if (e.target.closest(".node") || e.target.closest(".properties-panel") || e.target.closest(".sidebar") || e.target.closest(".topbar") || e.target.closest(".floating-controls") || e.target.closest(".modal") || e.target.closest(".connector-line-overlay") || e.target.closest(".line-end-handle-ui") || e.target.closest(".line-label")) {
+        return;
+    }
+
+    // Keep panning available with middle or right mouse button.
+    if (e.button === 1 || e.button === 2) {
+        e.preventDefault();
+        isPanning = true;
+        canvas.classList.add("grabbing");
+        panStart = { x: e.clientX, y: e.clientY };
+        panOffset = { x: viewportTransform.x, y: viewportTransform.y };
+        workspace.setPointerCapture(e.pointerId);
+        return;
+    }
+
+    if (e.button !== 0) return;
+
+    marqueeAdditive = e.ctrlKey || e.metaKey || e.shiftKey;
+    marqueeBaseSelection = marqueeAdditive ? new Set(selectedNodeIds) : new Set();
+    isMarqueeSelecting = true;
+    marqueeMoved = false;
+    marqueeStartMouse = { x: e.clientX, y: e.clientY };
+    marqueeStartCanvas = screenToCanvas(e.clientX, e.clientY);
+    marqueeCurrentCanvas = { ...marqueeStartCanvas };
+    updateMarqueeBox();
+    setMarqueeBoxVisibility(false);
+    workspace.setPointerCapture(e.pointerId);
+}
+
+function handleWorkspaceContextMenu(e) {
+    if (e.target.closest(".canvas") || e.target.closest(".node") || e.target.closest(".svg-connector-overlay") || e.target.closest(".line-handles-layer")) {
+        e.preventDefault();
+    }
+}
+
+function hasActivePointerInteraction() {
+    return isPanning || isMarqueeSelecting || !!draggingLineEnd || !!draggingLineRouteId || !!draggingStandaloneLineId || !!draggingLineLabelId || !!draggingNodeId || !!resizingNodeId || !!draggingTextNodeId || !!(activePortNodeId && activePortName);
+}
+
+function handleGlobalPointerAbort() {
+    if (!hasActivePointerInteraction()) return;
+    handleGlobalPointerUp({ pointerId: -1 });
+}
+
+function handleGlobalPointerMove(e) {
+    // Failsafe release when pointerup happens outside app/window and is missed.
+    if (hasActivePointerInteraction() && e.buttons === 0) {
+        handleGlobalPointerUp(e);
+        return;
+    }
+
+    if (isPanning) {
+        const dx = e.clientX - panStart.x;
+        const dy = e.clientY - panStart.y;
+        viewportTransform.x = panOffset.x + dx;
+        viewportTransform.y = panOffset.y + dy;
+        updateCanvasTransform();
+    } else if (isMarqueeSelecting) {
+        marqueeCurrentCanvas = screenToCanvas(e.clientX, e.clientY);
+        const moveDistance = Math.hypot(e.clientX - marqueeStartMouse.x, e.clientY - marqueeStartMouse.y);
+        if (!marqueeMoved && moveDistance > 4) {
+            marqueeMoved = true;
+            setMarqueeBoxVisibility(true);
+        }
+
+        if (marqueeMoved) {
+            updateMarqueeBox();
+            updateMarqueeSelection();
+        }
+    } else if (draggingLineEnd && draggingLineEnd.lineId) {
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        lineDrawingMousePos = coords;
+
+        const line = lines.find(l => l.id === draggingLineEnd.lineId);
+        if (line) {
+            const movingNodeId = draggingLineEnd.end === "from" ? line.fromId : line.toId;
+            const movingNode = nodes[movingNodeId];
+            if (movingNode && movingNode.type === "line-anchor") {
+                movingNode.x = snap(coords.x);
+                movingNode.y = snap(coords.y);
+                lineEndDragMoved = true;
+            }
+        }
+
+        lineEndSnapTarget = findNearestPort(coords.x, coords.y, 26);
+
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+        if (lineEndSnapTarget) {
+            const portEl = document.querySelector(`#node-${lineEndSnapTarget.nodeId} .port-${lineEndSnapTarget.portName}`);
+            if (portEl) portEl.classList.add("snapped");
+        }
+        renderConnectors();
+    } else if (draggingLineLabelId) {
+        const line = lines.find((l) => l.id === draggingLineLabelId);
+        if (!line) return;
+
+        const moveDistance = Math.hypot(e.clientX - lineLabelDragStartMouse.x, e.clientY - lineLabelDragStartMouse.y);
+        if (!lineLabelDragStarted && moveDistance < 4) {
+            return;
+        }
+        lineLabelDragStarted = true;
+
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const startCoords = screenToCanvas(lineLabelDragStartMouse.x, lineLabelDragStartMouse.y);
+        const dx = coords.x - startCoords.x;
+        const dy = coords.y - startCoords.y;
+
+        const nextOffset = {
+            x: Math.round(lineLabelDragStartOffset.x + dx),
+            y: Math.round(lineLabelDragStartOffset.y + dy)
+        };
+        const prevOffset = getLineLabelOffset(line);
+        line.labelOffset = nextOffset;
+        if (nextOffset.x !== prevOffset.x || nextOffset.y !== prevOffset.y) {
+            lineLabelDragMoved = true;
+        }
+        renderConnectors();
+    } else if (draggingLineRouteId) {
+        const line = lines.find(l => l.id === draggingLineRouteId);
+        if (line) {
+            const coords = screenToCanvas(e.clientX, e.clientY);
+            line.manualWaypoint = {
+                x: snap(coords.x),
+                y: snap(coords.y)
+            };
+            renderConnectors();
+        }
+    } else if (draggingStandaloneLineId) {
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const dx = coords.x - lineDragStartCanvas.x;
+        const dy = coords.y - lineDragStartCanvas.y;
+
+        draggingStandaloneLineIds.forEach((lineId) => {
+            const line = lines.find((l) => l.id === lineId);
+            if (!line) return;
+
+            const fromStart = lineDragStartFrom[lineId];
+            const toStart = lineDragStartTo[lineId];
+            if (!fromStart || !toStart) return;
+
+            const fromNode = nodes[fromStart.nodeId];
+            const toNode = nodes[toStart.nodeId];
+            if (!fromNode || !toNode || fromNode.type !== "line-anchor" || toNode.type !== "line-anchor") return;
+
+            fromNode.x = snap(fromStart.x + dx);
+            fromNode.y = snap(fromStart.y + dy);
+            toNode.x = snap(toStart.x + dx);
+            toNode.y = snap(toStart.y + dy);
+
+            const waypointStart = lineDragStartWaypoint[lineId];
+            if (waypointStart) {
+                line.manualWaypoint = {
+                    x: snap(waypointStart.x + dx),
+                    y: snap(waypointStart.y + dy)
+                };
+            }
+        });
+
+        lineDragMoved = true;
+        renderConnectors();
+    } else if (draggingNodeId && nodes[draggingNodeId]) {
+        // Move shape node
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const startCoords = screenToCanvas(dragStartMouse.x, dragStartMouse.y);
+        const dx = coords.x - startCoords.x;
+        const dy = coords.y - startCoords.y;
+
+        const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
+            ? Array.from(selectedNodeIds)
+            : [draggingNodeId];
+
+        const tentativePositions = {};
+        draggedSelection.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const startPos = dragStartNodePositions[nodeId] || { x: nodes[nodeId].x, y: nodes[nodeId].y };
+            tentativePositions[nodeId] = {
+                x: snap(startPos.x + dx),
+                y: snap(startPos.y + dy)
+            };
+        });
+
+        const primaryNode = nodes[draggingNodeId];
+        let snapOffsetX = 0;
+        let snapOffsetY = 0;
+        const guidesToDraw = [];
+        
+        if (primaryNode) {
+            const tx = tentativePositions[draggingNodeId].x;
+            const ty = tentativePositions[draggingNodeId].y;
+            const w = primaryNode.width;
+            const h = primaryNode.height;
+            
+            const edgesX = [
+                { type: "left", val: tx - w / 2 },
+                { type: "right", val: tx + w / 2 }
+            ];
+            const edgesY = [
+                { type: "top", val: ty - h / 2 },
+                { type: "bottom", val: ty + h / 2 }
+            ];
+            
+            const SNAP_THRESHOLD = 5;
+            let bestSnapX = null;
+            let bestSnapY = null;
+            let minDistX = SNAP_THRESHOLD;
+            let minDistY = SNAP_THRESHOLD;
+            let matchNodeX = null;
+            let matchNodeY = null;
+            
+            Object.keys(nodes).forEach(id => {
+                if (draggedSelection.includes(id)) return;
+                const staticNode = nodes[id];
+                const sw = staticNode.width;
+                const sh = staticNode.height;
+                const sx = staticNode.x;
+                const sy = staticNode.y;
+                
+                const sEdgesX = [sx - sw / 2, sx + sw / 2];
+                const sEdgesY = [sy - sh / 2, sy + sh / 2];
+                
+                edgesX.forEach(ex => {
+                    sEdgesX.forEach(sex => {
+                        const dist = Math.abs(ex.val - sex);
+                        if (dist < minDistX) {
+                            minDistX = dist;
+                            bestSnapX = sex - (ex.type === "left" ? -w / 2 : w / 2);
+                            matchNodeX = staticNode;
+                        }
+                    });
+                });
+                
+                edgesY.forEach(ey => {
+                    sEdgesY.forEach(sey => {
+                        const dist = Math.abs(ey.val - sey);
+                        if (dist < minDistY) {
+                            minDistY = dist;
+                            bestSnapY = sey - (ey.type === "top" ? -h / 2 : h / 2);
+                            matchNodeY = staticNode;
+                        }
+                    });
+                });
+            });
+            
+            if (bestSnapX !== null) {
+                snapOffsetX = bestSnapX - tx;
+                const nx = tx + snapOffsetX;
+                const sEdgesX = [matchNodeX.x - matchNodeX.width / 2, matchNodeX.x + matchNodeX.width / 2];
+                const matchX = Math.abs((nx - w / 2) - sEdgesX[0]) < 1 ? sEdgesX[0] : 
+                              (Math.abs((nx - w / 2) - sEdgesX[1]) < 1 ? sEdgesX[1] : 
+                              (Math.abs((nx + w / 2) - sEdgesX[0]) < 1 ? sEdgesX[0] : sEdgesX[1]));
+                guidesToDraw.push({ x1: matchX, y1: Math.min(ty, matchNodeX.y) - 50, x2: matchX, y2: Math.max(ty, matchNodeX.y) + 50 });
+            }
+            if (bestSnapY !== null) {
+                snapOffsetY = bestSnapY - ty;
+                const ny = ty + snapOffsetY;
+                const sEdgesY = [matchNodeY.y - matchNodeY.height / 2, matchNodeY.y + matchNodeY.height / 2];
+                const matchY = Math.abs((ny - h / 2) - sEdgesY[0]) < 1 ? sEdgesY[0] : 
+                              (Math.abs((ny - h / 2) - sEdgesY[1]) < 1 ? sEdgesY[1] : 
+                              (Math.abs((ny + h / 2) - sEdgesY[0]) < 1 ? sEdgesY[0] : sEdgesY[1]));
+                guidesToDraw.push({ x1: Math.min(tx, matchNodeY.x) - 50, y1: matchY, x2: Math.max(tx, matchNodeY.x) + 50, y2: matchY });
+            }
+        }
+
+        draggedSelection.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            nodes[nodeId].x = tentativePositions[nodeId].x + snapOffsetX;
+            nodes[nodeId].y = tentativePositions[nodeId].y + snapOffsetY;
+
+            const nodeEl = document.getElementById("node-" + nodeId);
+            if (nodeEl) {
+                nodeEl.style.left = `${nodes[nodeId].x}px`;
+                nodeEl.style.top = `${nodes[nodeId].y}px`;
+            }
+        });
+        
+        renderConnectors();
+        
+        if (svgAlignmentGuides) {
+            svgAlignmentGuides.innerHTML = guidesToDraw.map(g => 
+                `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" class="alignment-guide" />`
+            ).join("");
+        }
+    } else if (resizingNodeId && nodes[resizingNodeId]) {
+        // Resize shape node
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const startCoords = screenToCanvas(resizeStartMouse.x, resizeStartMouse.y);
+        const dx = coords.x - startCoords.x;
+        const dy = coords.y - startCoords.y;
+        
+        // Calculate new size
+        const newW = snap(resizeStartNodeSize.width + dx);
+        const newH = snap(resizeStartNodeSize.height + dy);
+        
+        nodes[resizingNodeId].width = Math.max(60, newW);
+        nodes[resizingNodeId].height = Math.max(30, newH);
+        
+        const nodeEl = document.getElementById("node-" + resizingNodeId);
+        if (nodeEl) {
+            nodeEl.style.width = `${nodes[resizingNodeId].width}px`;
+            nodeEl.style.height = `${nodes[resizingNodeId].height}px`;
+            
+            // Re-render shape SVGs to reflect new dimensions
+            const svgWrapper = nodeEl.querySelector(".shape-svg-wrapper");
+            if (svgWrapper) {
+                svgWrapper.innerHTML = generateShapeSVG(nodes[resizingNodeId]);
+            }
+        }
+        renderConnectors();
+    } else if (draggingTextNodeId && nodes[draggingTextNodeId]) {
+        // Drag shape text offset
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        const startCoords = screenToCanvas(dragStartMouse.x, dragStartMouse.y);
+        const dx = coords.x - startCoords.x;
+        const dy = coords.y - startCoords.y;
+        
+        nodes[draggingTextNodeId].textOffset.x = dragStartTextOffset.x + dx;
+        nodes[draggingTextNodeId].textOffset.y = dragStartTextOffset.y + dy;
+        
+        const nodeEl = document.getElementById("node-" + draggingTextNodeId);
+        if (nodeEl) {
+            const textContainer = nodeEl.querySelector(".node-text-container");
+            if (textContainer) {
+                textContainer.style.transform = `translate(${nodes[draggingTextNodeId].textOffset.x}px, ${nodes[draggingTextNodeId].textOffset.y}px)`;
+            }
+        }
+    } else if (activePortNodeId && activePortName) {
+        // Draw connector line preview
+        const coords = screenToCanvas(e.clientX, e.clientY);
+        lineDrawingMousePos = coords;
+        
+        // Check for snapping to other ports
+        checkPortHoverSnap(coords.x, coords.y);
+        renderConnectors();
+    }
+}
+
+function handleGlobalPointerUp(e) {
+    if (isPanning) {
+        isPanning = false;
+        canvas.classList.remove("grabbing");
+        try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
+    } else if (isMarqueeSelecting) {
+        if (marqueeMoved) {
+            updateMarqueeSelection();
+            applyNodeSelection(selectedNodeIds);
+        } else if (!marqueeAdditive) {
+            selectElement(null);
+        }
+
+        isMarqueeSelecting = false;
+        marqueeMoved = false;
+        setMarqueeBoxVisibility(false);
+        try { workspace.releasePointerCapture(e.pointerId); } catch(err) {}
+    } else if (draggingLineEnd) {
+        const line = lines.find(l => l.id === draggingLineEnd.lineId);
+        let changed = false;
+        if (line) {
+            const endKey = draggingLineEnd.end === "from" ? "fromId" : "toId";
+            const portKey = draggingLineEnd.end === "from" ? "fromPort" : "toPort";
+            const prevNodeId = line[endKey];
+            const prevPort = line[portKey];
+
+            if (lineEndSnapTarget) {
+                line[endKey] = lineEndSnapTarget.nodeId;
+                line[portKey] = lineEndSnapTarget.portName;
+                changed = prevNodeId !== line[endKey] || prevPort !== line[portKey] || lineEndDragMoved;
+            } else if (lineEndDragMoved) {
+                changed = true;
+            }
+
+            if (changed) {
+                cleanupOrphanLineAnchors();
+                saveHistory();
+                saveAutosave();
+            }
+        }
+
+        draggingLineEnd = null;
+        lineEndSnapTarget = null;
+        lineDrawingMousePos = null;
+        lineEndDragMoved = false;
+        document.body.classList.remove("line-end-dragging");
+        document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+        renderConnectors();
+    } else if (draggingLineRouteId) {
+        const line = lines.find(l => l.id === draggingLineRouteId);
+        const before = lineRouteDragStartWaypoint;
+        const after = line ? line.manualWaypoint : null;
+        const moved = !!line && (
+            !before ||
+            !after ||
+            before.x !== after.x ||
+            before.y !== after.y
+        );
+
+        draggingLineRouteId = null;
+        lineRouteDragStartWaypoint = null;
+        document.body.classList.remove("line-route-dragging");
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+        }
+        renderConnectors();
+    } else if (draggingStandaloneLineId) {
+        const moved = lineDragMoved;
+        draggingStandaloneLineId = null;
+        draggingStandaloneLineIds = [];
+        lineDragStartFrom = {};
+        lineDragStartTo = {};
+        lineDragStartWaypoint = {};
+        lineDragMoved = false;
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+        }
+        renderConnectors();
+    } else if (draggingLineLabelId) {
+        const moved = lineLabelDragMoved;
+        draggingLineLabelId = null;
+        lineLabelDragMoved = false;
+        lineLabelDragStarted = false;
+        document.body.classList.remove("line-label-dragging");
+        if (moved) {
+            saveHistory();
+            saveAutosave();
+            renderConnectors();
+        }
+    } else if (draggingNodeId) {
+        const draggedSelection = (selectedType === "node" && selectedNodeIds.has(draggingNodeId))
+            ? Array.from(selectedNodeIds)
+            : [draggingNodeId];
+        const didMove = draggedSelection.some(nodeId => {
+            const startPos = dragStartNodePositions[nodeId];
+            return startPos && nodes[nodeId] && (startPos.x !== nodes[nodeId].x || startPos.y !== nodes[nodeId].y);
+        });
+        draggingNodeId = null;
+        dragStartNodePositions = {};
+        if (svgAlignmentGuides) svgAlignmentGuides.innerHTML = "";
+        if (didMove) {
+            saveHistory();
+            saveAutosave();
+        }
+    } else if (resizingNodeId) {
+        resizingNodeId = null;
+        saveHistory();
+        saveAutosave();
+    } else if (draggingTextNodeId) {
+        draggingTextNodeId = null;
+        saveHistory();
+        saveAutosave();
+    } else if (activePortNodeId && activePortName) {
+        // Complete or cancel line
+        if (hoveredPortNodeId && hoveredPortName) {
+            createConnectorLine(activePortNodeId, activePortName, hoveredPortNodeId, hoveredPortName);
+        }
+        
+        activePortNodeId = null;
+        activePortName = null;
+        lineDrawingMousePos = null;
+        
+        // Clear highlights
+        document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
+        hoveredPortNodeId = null;
+        hoveredPortName = null;
+        
+        document.body.classList.remove("drawing-line");
+        
+        renderConnectors();
+    }
+}
+
+// --- Drag & Drop Library Shapes ---
+const LIBRARY_SHAPE_TYPES = new Set([
+    "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
+    "text-box", "sticky-note", "cloud", "line", "brace-left", "brace-right", "paren-left", "paren-right"
+]);
+
+let libraryDragShapeType = "";
+function handleLibraryDragStart(e) {
+    libraryDragShapeType = e.currentTarget.dataset.shape;
+    e.dataTransfer.setData("application/x-flowcraft-shape", libraryDragShapeType);
+    e.dataTransfer.setData("text/plain", libraryDragShapeType);
+    
+    // Create preview cursor ghost
+    const preview = document.createElement("div");
+    preview.className = "drag-preview-helper";
+    preview.textContent = e.currentTarget.querySelector("span").textContent;
+    preview.style.backgroundColor = resolveCssColorVar("--accent-primary-light", "#e0f2fe");
+    preview.style.border = `1px solid ${resolveCssColorVar("--accent-primary", "#0ea5e9")}`;
+    preview.style.padding = "6px 12px";
+    preview.style.borderRadius = "6px";
+    document.body.appendChild(preview);
+    e.dataTransfer.setDragImage(preview, 15, 10);
+    
+    // Remove cursor helper shortly after dragging starts
+    setTimeout(() => preview.remove(), 50);
+}
+
+function handleCanvasDrop(e) {
+    e.preventDefault();
+    const shapeType = e.dataTransfer.getData("application/x-flowcraft-shape") || e.dataTransfer.getData("text/plain");
+    if (!LIBRARY_SHAPE_TYPES.has(shapeType)) return;
+
+    // Reset transient pointer modes to avoid stale interaction locks after DnD.
+    resetTransientInteractions();
+    
+    const coords = screenToCanvas(e.clientX, e.clientY);
+    addNewShapeNode(shapeType, snap(coords.x), snap(coords.y));
+}
+
+function resetTransientInteractions() {
+    isPanning = false;
+    isMarqueeSelecting = false;
+    marqueeMoved = false;
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    hoveredPortNodeId = null;
+    hoveredPortName = null;
+    lineDrawingMousePos = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+    draggingLineRouteId = null;
+    lineRouteDragStartWaypoint = null;
+    draggingLineLabelId = null;
+    lineLabelDragMoved = false;
+    lineLabelDragStarted = false;
+    draggingStandaloneLineId = null;
+    draggingStandaloneLineIds = [];
+    lineDragStartFrom = {};
+    lineDragStartTo = {};
+    lineDragStartWaypoint = {};
+    lineDragMoved = false;
+    setMarqueeBoxVisibility(false);
+    document.body.classList.remove("drawing-line", "line-end-dragging", "line-route-dragging", "line-label-dragging");
+    document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
+}
+
+function addNewShapeNode(shapeType, x, y) {
+    const id = "node_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const isTextBox = shapeType === "text-box";
+    const isStickyNote = shapeType === "sticky-note";
+    const isCloud = shapeType === "cloud";
+    const isLine = shapeType === "line";
+    const glyphType = normalizeLineGlyphType(shapeType);
+
+    if (isLine || glyphType) {
+        createStandaloneLineAt(x, y, glyphType);
+        return;
+    }
+    
+    nodes[id] = {
+        id: id,
+        type: "shape",
+        shapeType: shapeType,
+        x: x,
+        y: y,
+        width: isLine ? 140 : 120,
+        height: isTextBox ? 36 : (isStickyNote ? 90 : (isCloud ? 72 : (isLine ? 30 : 60))),
+        text: isLine ? "" : (isTextBox ? "Text" : (isStickyNote ? "Notering" : "New Shape")),
+        textOffset: { x: 0, y: 0 },
+        textSize: 14,
+        bgColor: (isTextBox || isLine) ? "transparent" : (isStickyNote ? "#fef08a" : "#ffffff"),
+        borderColor: isTextBox ? "transparent" : (isStickyNote ? "#ca8a04" : "#64748b"),
+        borderWidth: isTextBox ? 0 : (isStickyNote ? 1 : (isLine ? 3 : 2)),
+        borderStyle: "solid",
+        textPosition: "center",
+        url: ""
+    };
+    
+    saveHistory();
+    saveAutosave();
+    render();
+    selectElement(id, "node");
+}
+
+function createStandaloneLineAt(x, y, glyphType = null) {
+    const fromAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_from";
+    const toAnchorId = "line_anchor_" + Date.now() + "_" + Math.floor(Math.random() * 1000) + "_to";
+    const isBraceGlyph = isBraceGlyphType(glyphType);
+
+    const fromX = isBraceGlyph ? snap(x) : snap(x - 70);
+    const fromY = isBraceGlyph ? snap(y - 70) : snap(y);
+    const toX = isBraceGlyph ? snap(x) : snap(x + 70);
+    const toY = isBraceGlyph ? snap(y + 70) : snap(y);
+    const fromPort = isBraceGlyph ? "bottom" : "right";
+    const toPort = isBraceGlyph ? "top" : "left";
+
+    nodes[fromAnchorId] = {
+        id: fromAnchorId,
+        type: "line-anchor",
+        x: fromX,
+        y: fromY,
+        width: 0,
+        height: 0,
+        zIndex: 10
+    };
+
+    nodes[toAnchorId] = {
+        id: toAnchorId,
+        type: "line-anchor",
+        x: toX,
+        y: toY,
+        width: 0,
+        height: 0,
+        zIndex: 10
+    };
+
+    const lineId = "line_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nextZIndex = getNextFrontLineZIndex();
+    lines.push({
+        id: lineId,
+        fromId: fromAnchorId,
+        fromPort: fromPort,
+        toId: toAnchorId,
+        toPort: toPort,
+        lineType: "straight",
+        lineStyle: defaultLineSettings.lineStyle,
+        color: defaultLineSettings.color,
+        thickness: defaultLineSettings.thickness,
+        hasArrow: glyphType ? "none" : defaultLineSettings.hasArrow,
+        glyphType: glyphType,
+        label: "",
+        labelSize: 14,
+        labelOffset: { x: 0, y: -18 },
+        zIndex: nextZIndex
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    selectElement(lineId, "line");
+}
+
+function normalizeLineGlyphType(shapeType) {
+    const val = String(shapeType || "").trim().toLowerCase();
+    if (val === "brace-left" || val === "paren-left" || val === "bracket-left" || val === "left-bracket") return "brace-left";
+    if (val === "brace-right" || val === "paren-right" || val === "bracket-right" || val === "right-bracket") return "brace-right";
+    return null;
+}
+
+function isBraceGlyphType(glyphType) {
+    return normalizeLineGlyphType(glyphType) === "brace-left" || normalizeLineGlyphType(glyphType) === "brace-right";
+}
+
+function getNextFrontLineZIndex() {
+    const maxFront = lines.reduce((max, line) => {
+        const zIndex = Number(line?.zIndex);
+        return Number.isFinite(zIndex) && zIndex > max ? zIndex : max;
+    }, 0);
+    return maxFront + 1;
+}
+
+function getNextBackLineZIndex() {
+    const minBack = lines.reduce((min, line) => {
+        const zIndex = Number(line?.zIndex);
+        return Number.isFinite(zIndex) && zIndex < min ? zIndex : min;
+    }, 0);
+    return minBack - 1;
+}
+
+// --- Ports & Snap Checking ---
+function checkPortHoverSnap(canvasX, canvasY) {
+    let bestSnap = null;
+    let minDistance = 24; // snapping radius
+    
+    Object.keys(nodes).forEach(nodeId => {
+        // Do not connect back to the same node
+        if (nodeId === activePortNodeId) return;
+        
+        const node = nodes[nodeId];
+        if (!node || node.type === "line-anchor") return;
+        const ports = getPortCoords(nodeId);
+        
+        Object.keys(ports).forEach(portName => {
+            const port = ports[portName];
+            const dist = Math.hypot(canvasX - port.x, canvasY - port.y);
+            if (dist < minDistance) {
+                minDistance = dist;
+                bestSnap = { nodeId, portName };
+            }
+        });
+    });
+    
+    // Reset previous port snapped visuals
+    document.querySelectorAll(".port").forEach(p => p.classList.remove("snapped"));
+    
+    if (bestSnap) {
+        hoveredPortNodeId = bestSnap.nodeId;
+        hoveredPortName = bestSnap.portName;
+        
+        const portEl = document.querySelector(`#node-${bestSnap.nodeId} .port-${bestSnap.portName}`);
+        if (portEl) portEl.classList.add("snapped");
+    } else {
+        hoveredPortNodeId = null;
+        hoveredPortName = null;
+    }
+}
+
+function findNearestPort(canvasX, canvasY, radius = 24) {
+    let bestSnap = null;
+    let minDistance = radius;
+
+    Object.keys(nodes).forEach(nodeId => {
+        const node = nodes[nodeId];
+        if (!node || node.type === "line-anchor") return;
+        const ports = getPortCoords(nodeId);
+
+        Object.keys(ports).forEach(portName => {
+            const port = ports[portName];
+            const dist = Math.hypot(canvasX - port.x, canvasY - port.y);
+            if (dist < minDistance) {
+                minDistance = dist;
+                bestSnap = { nodeId, portName };
+            }
+        });
+    });
+
+    return bestSnap;
+}
+
+function getPortCoords(nodeId) {
+    const node = nodes[nodeId];
+    if (!node) return {};
+
+    if (node.type === "line-anchor") {
+        return {
+            top: { x: node.x, y: node.y },
+            right: { x: node.x, y: node.y },
+            bottom: { x: node.x, y: node.y },
+            left: { x: node.x, y: node.y }
+        };
+    }
+    
+    return {
+        top: { x: node.x, y: node.y - node.height / 2 },
+        right: { x: node.x + node.width / 2, y: node.y },
+        bottom: { x: node.x, y: node.y + node.height / 2 },
+        left: { x: node.x - node.width / 2, y: node.y }
+    };
+}
+
+function createConnectorLine(fromId, fromPort, toId, toPort) {
+    // Check if line already exists
+    const exists = lines.some(l => 
+        l.fromId === fromId && l.fromPort === fromPort && 
+        l.toId === toId && l.toPort === toPort
+    );
+    if (exists) return;
+    
+    const id = "line_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    const nextZIndex = getNextFrontLineZIndex();
+    lines.push({
+        id: id,
+        fromId: fromId,
+        fromPort: fromPort,
+        toId: toId,
+        toPort: toPort,
+        lineType: defaultLineSettings.lineType,
+        lineStyle: defaultLineSettings.lineStyle,
+        color: defaultLineSettings.color,
+        thickness: defaultLineSettings.thickness,
+        hasArrow: defaultLineSettings.hasArrow,
+        label: "",
+        labelSize: 14,
+        labelOffset: { x: 0, y: -18 },
+        zIndex: nextZIndex
+    });
+    
+    saveHistory();
+    saveAutosave();
+    render();
+    selectElement(id, "line");
+}
+
+// --- Render Elements ---
+function render() {
+    // Remove obsolete node elements
+    const currentElements = nodesContainer.querySelectorAll(".node");
+    currentElements.forEach(el => {
+        const id = el.id.replace("node-", "");
+        if (!nodes[id]) el.remove();
+    });
+
+    if (nodeHandlesLayer) nodeHandlesLayer.innerHTML = "";
+    
+    // Render/Update nodes
+    Object.keys(nodes).forEach(id => {
+        const node = nodes[id];
+        let nodeEl = document.getElementById("node-" + id);
+        if (!node || node.type === "line-anchor") {
+            if (nodeEl) nodeEl.remove();
+            return;
+        }
+        
+        if (!nodeEl) {
+            nodeEl = document.createElement("div");
+            nodeEl.id = "node-" + id;
+            nodeEl.className = "node";
+            nodeEl.setAttribute("draggable", "false");
+            nodeEl.addEventListener("dragstart", (e) => e.preventDefault());
+            
+            // Port HTML templates
+            ["top", "right", "bottom", "left"].forEach(p => {
+                const portEl = document.createElement("div");
+                portEl.className = `port port-${p}`;
+                portEl.addEventListener("pointerdown", (e) => {
+                    e.stopPropagation();
+                    e.preventDefault(); // Prevent text selection and browser drag-cancellation
+                    activePortNodeId = id;
+                    activePortName = p;
+                    lineDrawingMousePos = getPortCoords(id)[p];
+                    portEl.setPointerCapture(e.pointerId);
+                    document.body.classList.add("drawing-line");
+                });
+                nodeEl.appendChild(portEl);
+            });
+            
+            // Text Container template
+            const textContainer = document.createElement("div");
+            textContainer.className = "node-text-container";
+            const textSpan = document.createElement("span");
+            textSpan.className = "node-text";
+            textContainer.appendChild(textSpan);
+            
+            // Drag handle to move text offset
+            textContainer.addEventListener("pointerdown", (e) => {
+                // Text offset dragging is explicit so normal drag still moves the node.
+                if (e.altKey && selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(id)) {
+                    e.stopPropagation();
+                    draggingTextNodeId = id;
+                    dragStartMouse = { x: e.clientX, y: e.clientY };
+                    dragStartTextOffset = { x: node.textOffset.x, y: node.textOffset.y };
+                    textContainer.setPointerCapture(e.pointerId);
+                }
+            });
+            
+            nodeEl.appendChild(textContainer);
+            
+            // Double click to edit
+            nodeEl.addEventListener("dblclick", (e) => {
+                e.stopPropagation();
+                startTextEdit(id);
+            });
+            
+            // Pointer Down for Selection & Dragging Shape
+            nodeEl.addEventListener("pointerdown", (e) => {
+                if (e.target.classList.contains("port") || e.target.classList.contains("resize-handle")) return;
+                if (draggingLineEnd || document.body.classList.contains("line-end-dragging")) return;
+                e.stopPropagation();
+                const isToggleSelection = e.ctrlKey || e.metaKey;
+                if (isToggleSelection) {
+                    selectElement(id, "node", { toggle: true });
+                    if (!selectedNodeIds.has(id)) return;
+                } else if (!(selectedType === "node" && selectedNodeIds.has(id))) {
+                    selectElement(id, "node");
+                }
+                
+                draggingNodeId = id;
+                dragStartMouse = { x: e.clientX, y: e.clientY };
+                dragStartNodePos = { x: node.x, y: node.y };
+                dragStartNodePositions = {};
+                const dragTargets = (selectedType === "node" && selectedNodeIds.size > 0)
+                    ? Array.from(selectedNodeIds)
+                    : [id];
+                dragTargets.forEach(nodeId => {
+                    if (!nodes[nodeId]) return;
+                    dragStartNodePositions[nodeId] = { x: nodes[nodeId].x, y: nodes[nodeId].y };
+                });
+                nodeEl.setPointerCapture(e.pointerId);
+            });
+            
+            nodesContainer.appendChild(nodeEl);
+        }
+        
+        // Node Properties Updates
+        nodeEl.style.left = `${node.x}px`;
+        nodeEl.style.top = `${node.y}px`;
+        nodeEl.style.width = `${node.width}px`;
+        nodeEl.style.height = `${node.height}px`;
+        nodeEl.style.zIndex = node.zIndex || 10;
+        
+        // Handle selection state styling
+        nodeEl.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(id));
+        nodeEl.classList.toggle("image-node", node.type === "image");
+        
+        // Inline shape template SVG or image container
+        let svgWrapper = nodeEl.querySelector(".shape-svg-wrapper");
+        let imageElement = nodeEl.querySelector(".node-image-img");
+        
+        if (node.type === "image") {
+            if (svgWrapper) svgWrapper.remove();
+            if (!imageElement) {
+                imageElement = document.createElement("img");
+                imageElement.className = "node-image-img";
+                imageElement.setAttribute("draggable", "false");
+                nodeEl.appendChild(imageElement);
+            }
+            imageElement.src = node.imageUrl;
+
+            const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+            const left = Math.max(0, Math.min(0.9, Number(crop.left) || 0));
+            const top = Math.max(0, Math.min(0.9, Number(crop.top) || 0));
+            const right = Math.max(0, Math.min(0.9, Number(crop.right) || 0));
+            const bottom = Math.max(0, Math.min(0.9, Number(crop.bottom) || 0));
+            const visW = Math.max(0.05, 1 - left - right);
+            const visH = Math.max(0.05, 1 - top - bottom);
+
+            imageElement.style.position = "absolute";
+            imageElement.style.width = `${100 / visW}%`;
+            imageElement.style.height = `${100 / visH}%`;
+            imageElement.style.left = `${-(left / visW) * 100}%`;
+            imageElement.style.top = `${-(top / visH) * 100}%`;
+            imageElement.style.objectFit = "fill";
+            nodeEl.style.overflow = "hidden";
+        } else {
+            if (imageElement) imageElement.remove();
+            if (!svgWrapper) {
+                svgWrapper = document.createElement("div");
+                svgWrapper.className = "shape-svg-wrapper";
+                nodeEl.prepend(svgWrapper);
+            }
+            svgWrapper.innerHTML = generateShapeSVG(node);
+        }
+        
+        // Set label text
+        const textSpan = nodeEl.querySelector(".node-text");
+        if (textSpan) {
+            if (editingNodeId !== id) {
+                textSpan.innerHTML = sanitizeTextHtml(node.text || "");
+            }
+            textSpan.style.fontSize = `${node.textSize || 14}px`;
+            
+            // Set text color dynamically for dark borders/fills
+            if (node.bgColor === "transparent") {
+                textSpan.style.color = resolveCssColorVar("--text-main", "#0f172a");
+            } else {
+                // simple contrast calculation: light bg gets main text, dark gets white text
+                const isDark = ["#334155", "#0f172a", "#4f46e5", "#0ea5e9", "#ef4444", "#8b5cf6"].includes(node.bgColor);
+                textSpan.style.color = isDark ? "white" : resolveCssColorVar("--text-main", "#0f172a");
+            }
+        }
+        
+        // Apply text dragging translation
+        const textContainer = nodeEl.querySelector(".node-text-container");
+        if (textContainer) {
+            textContainer.style.transform = `translate(${node.textOffset.x}px, ${node.textOffset.y}px)`;
+            applyTextPositionStyles(textContainer, textSpan, node.textPosition);
+        }
+        
+        // URL Link indicator icon
+        let linkIcon = nodeEl.querySelector(".node-link-icon");
+        if (node.url) {
+            if (!linkIcon) {
+                linkIcon = document.createElement("div");
+                linkIcon.className = "node-link-icon";
+                linkIcon.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square"></i>';
+                linkIcon.title = "Open Link: " + node.url;
+                linkIcon.addEventListener("pointerdown", e => e.stopPropagation());
+                linkIcon.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    const safeUrl = sanitizeUrl(node.url);
+                    if (safeUrl) window.open(safeUrl, "_blank", "noopener,noreferrer");
+                });
+                nodeEl.appendChild(linkIcon);
+            }
+        } else if (linkIcon) {
+            linkIcon.remove();
+        }
+
+        renderNodeResizeHandle(node);
+    });
+    
+    renderConnectors();
+    saveAutosave();
+}
+
+function renderNodeResizeHandle(node) {
+    if (!nodeHandlesLayer || !node) return;
+    if (!(selectedType === "node" && selectedNodeIds.size === 1 && selectedNodeIds.has(node.id))) return;
+
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "resize-handle";
+    resizeHandle.style.left = `${node.x + node.width / 2 - 9}px`;
+    resizeHandle.style.top = `${node.y + node.height / 2 - 9}px`;
+    resizeHandle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        resizingNodeId = node.id;
+        resizeStartMouse = { x: e.clientX, y: e.clientY };
+        resizeStartNodeSize = { width: node.width, height: node.height };
+        resizeHandle.setPointerCapture(e.pointerId);
+    });
+    nodeHandlesLayer.appendChild(resizeHandle);
+}
+
+// Validates that a value is a safe CSS colour (prevents SVG attribute injection).
+const CSS_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|transparent|rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+)?\s*\)|hsla?\(\s*[\d.]+\s*,\s*[\d.%]+\s*,\s*[\d.%]+(?:\s*,\s*[\d.]+)?\s*\))$/;
+function sanitizeCssColor(val, fallback) {
+    const trimmed = String(val || "").trim();
+    return CSS_COLOR_RE.test(trimmed) ? trimmed : fallback;
+}
+
+// Validates that a URL is safe to open (https/http only – blocks javascript: and data: URIs).
+function sanitizeUrl(raw) {
+    const trimmed = String(raw || "").trim();
+    return /^https?:\/\//i.test(trimmed) ? trimmed : "";
+}
+
+// Sanitizes HTML text input to safely allow formatting tags (b, strong, i, em, u, br, span)
+function sanitizeTextHtml(raw) {
+    if (raw === null || raw === undefined) return "";
+    const str = String(raw);
+    if (!str) return "";
+    if (!/<[a-z][\s\S]*>/i.test(str)) {
+        return str;
+    }
+    const temp = document.createElement("div");
+    temp.innerHTML = str;
+    
+    const allowedTags = ["B", "STRONG", "I", "EM", "U", "BR", "SPAN"];
+    const cleanElement = (el) => {
+        const children = Array.from(el.childNodes);
+        children.forEach((child) => {
+            if (child.nodeType === 1) {
+                if (!allowedTags.includes(child.tagName)) {
+                    const textNode = document.createTextNode(child.textContent || "");
+                    el.replaceChild(textNode, child);
+                } else {
+                    Array.from(child.attributes).forEach(attr => {
+                        if (attr.name === "style") {
+                            // Only allow color and font-weight style properties
+                            const allowed = (child.style.color ? `color:${child.style.color};` : "") +
+                                            (child.style.fontWeight ? `font-weight:${child.style.fontWeight};` : "");
+                            if (allowed) {
+                                child.setAttribute("style", allowed);
+                            } else {
+                                child.removeAttribute("style");
+                            }
+                        } else {
+                            child.removeAttribute(attr.name);
+                        }
+                    });
+                    cleanElement(child);
+                }
+            }
+        });
+    };
+    cleanElement(temp);
+    return temp.innerHTML;
+}
+
+// Apply text color to the current selection in textarea or contenteditable
+function applyTextColorToSelection(color, context) {
+    const textarea = context === "node" ? propText : propLineText;
+
+    // Case 1: typing in the Properties Panel textarea — wrap selection
+    if (document.activeElement === textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const val = textarea.value || "";
+        const before = val.substring(0, start);
+        const selected = val.substring(start, end);
+        const after = val.substring(end);
+        if (start === end) return; // No selection, nothing to paint
+        const wrapped = `<span style="color:${color}">${selected}</span>`;
+        textarea.value = before + wrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + wrapped.length;
+        if (context === "node") {
+            updateSelectedNodeText();
+            saveHistory(); saveAutosave();
+        } else {
+            updateSelectedLineText();
+            commitSelectedLineText();
+        }
+        updatePropertiesPanel();
+        return;
+    }
+
+    // Case 2: actively editing inline on canvas (contenteditable)
+    if ((context === "node" && editingNodeId) || (context === "line" && editingLineLabelId)) {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) return;
+        document.execCommand("styleWithCSS", false, true);
+        document.execCommand("foreColor", false, color);
+        return;
+    }
+
+    // Case 3: element selected but not editing — wrap entire text in color span
+    if (context === "node" && selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            const node = nodes[nodeId];
+            if (!node) return;
+            node.text = `<span style="color:${color}">${node.text || ""}</span>`;
+        });
+        saveHistory(); saveAutosave();
+        render();
+    } else if (context === "line" && selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        lineIds.forEach(id => {
+            const line = lines.find(l => l.id === id);
+            if (!line) return;
+            line.label = `<span style="color:${color}">${line.label || ""}</span>`;
+        });
+        saveHistory(); saveAutosave();
+        renderConnectors();
+    }
+}
+
+function generateShapeSVG(node) {
+    const w = node.width;
+    const h = node.height;
+    const fill = sanitizeCssColor(node.bgColor, "#ffffff");
+    const stroke = sanitizeCssColor(node.borderColor, "#64748b");
+    const strokeW = node.borderWidth;
+    
+    let dash = "none";
+    if (node.borderStyle === "dashed") dash = "6,4";
+    else if (node.borderStyle === "dotted") dash = "2,3";
+    
+    // Standard shapes representations
+    switch (node.shapeType) {
+        case "text-box":
+            return "";
+
+        case "sticky-note":
+            const foldSize = Math.min(w, h) * 0.2;
+            return `<svg>
+                <path d="M ${strokeW/2} ${strokeW/2} L ${w - foldSize - strokeW/2} ${strokeW/2} L ${w - strokeW/2} ${foldSize + strokeW/2} L ${w - strokeW/2} ${h - strokeW/2} L ${strokeW/2} ${h - strokeW/2} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <path d="M ${w - foldSize - strokeW/2} ${strokeW/2} L ${w - foldSize - strokeW/2} ${foldSize + strokeW/2} L ${w - strokeW/2} ${foldSize + strokeW/2} Z" fill="#fef9c3" stroke="${stroke}" stroke-width="${strokeW}"/>
+            </svg>`;
+
+        case "rectangle":
+            return `<svg><rect x="${strokeW/2}" y="${strokeW/2}" width="${w - strokeW}" height="${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" rx="2"/></svg>`;
+            
+        case "terminator":
+            const rx = h / 2;
+            return `<svg><rect x="${strokeW/2}" y="${strokeW/2}" width="${w - strokeW}" height="${h - strokeW}" rx="${rx}" ry="${rx}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+            
+        case "circle":
+            return `<svg><ellipse cx="${w/2}" cy="${h/2}" rx="${(w - strokeW)/2}" ry="${(h - strokeW)/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+            
+        case "diamond":
+            return `<svg><polygon points="${w/2} ${strokeW}, ${w - strokeW} ${h/2}, ${w/2} ${h - strokeW}, ${strokeW} ${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+            
+        case "parallelogram":
+            return `<svg><polygon points="${w*0.15} ${strokeW}, ${w - strokeW} ${strokeW}, ${w * 0.85} ${h - strokeW}, ${strokeW} ${h - strokeW}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+            
+        case "cylinder":
+            const ryCap = Math.min(12, h * 0.15);
+            return `<svg>
+                <path d="M ${strokeW} ${ryCap} L ${strokeW} ${h - ryCap} A ${(w-strokeW*2)/2} ${ryCap} 0 0 0 ${w-strokeW} ${h - ryCap} L ${w-strokeW} ${ryCap} A ${(w-strokeW*2)/2} ${ryCap} 0 0 0 ${strokeW} ${ryCap}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+                <ellipse cx="${w/2}" cy="${ryCap}" rx="${(w-strokeW*2)/2}" ry="${ryCap}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/>
+            </svg>`;
+            
+        case "document":
+            const waveH = Math.min(15, h * 0.15);
+            return `<svg><path d="M ${strokeW} ${strokeW} L ${w - strokeW} ${strokeW} L ${w - strokeW} ${h - waveH} Q ${w*0.75} ${h - waveH*2}, ${w*0.5} ${h - waveH} T ${strokeW} ${h - waveH} Z" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+            
+        case "hexagon":
+            return `<svg><polygon points="${w*0.18} ${strokeW}, ${w*0.82} ${strokeW}, ${w-strokeW} ${h/2}, ${w*0.82} ${h - strokeW}, ${w*0.18} ${h - strokeW}, ${strokeW} ${h/2}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "cloud":
+            return `<svg><path d="${buildCloudPathData(strokeW / 2, strokeW / 2, w - strokeW, h - strokeW)}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}"/></svg>`;
+
+        case "line": {
+            const yMid = h / 2;
+            return `<svg><line x1="${strokeW / 2}" y1="${yMid}" x2="${w - strokeW / 2}" y2="${yMid}" stroke="${stroke}" stroke-width="${strokeW}" stroke-dasharray="${dash}" stroke-linecap="round"/></svg>`;
+        }
+
+        default:
+            return "";
+    }
+}
+
+// --- Connector Lines rendering ---
+function renderConnectors() {
+    if (svgOverlayBack) svgOverlayBack.innerHTML = "";
+    if (svgOverlayFront) svgOverlayFront.innerHTML = "";
+    if (svgOverlayHit) svgOverlayHit.innerHTML = "";
+    if (lineHandlesLayer) lineHandlesLayer.innerHTML = "";
+    if (nodeHandlesLayer) nodeHandlesLayer.innerHTML = "";
+    
+    // Defs markers Arrowheads
+    if (svgOverlayBack) svgOverlayBack.innerHTML = `
+        <defs>
+            <marker id="arrow-end-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-start-back" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-end-selected-back" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
+            </marker>
+            <marker id="arrow-start-selected-back" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#0ea5e9" />
+            </marker>
+        </defs>
+    `;
+
+    if (svgOverlayFront) svgOverlayFront.innerHTML = `
+        <defs>
+            <marker id="arrow-end-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-start-front" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#64748b" />
+            </marker>
+            <marker id="arrow-end-selected-front" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="#0ea5e9" />
+            </marker>
+            <marker id="arrow-start-selected-front" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 1.5 L 0 5 L 10 8.5 z" fill="#0ea5e9" />
+            </marker>
+        </defs>
+    `;
+
+    // 1. Draw existing connection lines
+    const orderedLines = lines.slice().sort((a, b) => {
+        const zDiff = (Number(a?.zIndex) || 0) - (Number(b?.zIndex) || 0);
+        if (zDiff !== 0) return zDiff;
+        return lines.indexOf(a) - lines.indexOf(b);
+    });
+
+    orderedLines.forEach(line => {
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        
+        if (!fromNode || !toNode) return; // safeguard
+        
+        const fromCoords = getPortCoords(line.fromId)[line.fromPort];
+        const toCoords = getPortCoords(line.toId)[line.toPort];
+        
+        if (!fromCoords || !toCoords) return;
+        
+        const pathD = getLinePathD(line, fromCoords, toCoords);
+        const isStandalone = isStandaloneLineShape(line);
+        const targetSvg = (Number(line.zIndex) || 0) >= 0 ? svgOverlayFront : svgOverlayBack;
+        const markerSuffix = targetSvg === svgOverlayBack ? "back" : "front";
+        
+        // Draw physical line path
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", pathD);
+        const lineSelectedViaLineSelection = selectedId === line.id && selectedType === "line";
+        const lineSelectedViaAnchorSelection = selectedNodeIds.has(line.fromId) && selectedNodeIds.has(line.toId);
+        const isLineSelected = lineSelectedViaLineSelection || lineSelectedViaAnchorSelection;
+
+        path.setAttribute("class", "connector-line" + (isLineSelected ? " selected" : ""));
+        path.style.stroke = isLineSelected ? resolveCssColorVar("--accent-primary", "#0ea5e9") : line.color;
+        path.style.strokeWidth = `${line.thickness}px`;
+        path.addEventListener("pointerdown", (e) => {
+            if (tryStartNodeDragFromPointer(e)) return;
+            const wasSelected = selectedId === line.id && selectedType === "line";
+            const activeSelectedLineIds = getActiveSelectedLineIds();
+            e.stopPropagation();
+            if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+                e.preventDefault();
+                toggleStandaloneLineInNodeSelection(line);
+                return;
+            }
+
+            const shouldPreserveStandaloneGroupSelection = isStandalone && selectedType === "line" && activeSelectedLineIds.length > 1 && activeSelectedLineIds.includes(line.id);
+            if (!shouldPreserveStandaloneGroupSelection) {
+                selectElement(line.id, "line");
+            }
+            if (isStandalone) {
+                beginStandaloneLineDrag(line, e);
+            } else if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            }
+        });
+        
+        if (line.lineStyle === "dashed") path.style.strokeDasharray = "6 4";
+        else if (line.lineStyle === "dotted") path.style.strokeDasharray = "2 3";
+        else path.style.strokeDasharray = "none";
+        
+        // Arrows
+        const isSel = isLineSelected;
+        if (line.hasArrow === "end" || line.hasArrow === "both") {
+            path.setAttribute("marker-end", isSel ? `url(#arrow-end-selected-${markerSuffix})` : `url(#arrow-end-${markerSuffix})`);
+        }
+        if (line.hasArrow === "start" || line.hasArrow === "both") {
+            path.setAttribute("marker-start", isSel ? `url(#arrow-start-selected-${markerSuffix})` : `url(#arrow-start-${markerSuffix})`);
+        }
+        
+        targetSvg.appendChild(path);
+        
+        // Draw click trigger overlay path
+        const overlay = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        overlay.setAttribute("d", pathD);
+        overlay.setAttribute("class", "connector-line-overlay");
+        overlay.addEventListener("pointerdown", (e) => {
+            if (tryStartNodeDragFromPointer(e)) return;
+            const wasSelected = selectedId === line.id && selectedType === "line";
+            const activeSelectedLineIds = getActiveSelectedLineIds();
+            e.stopPropagation();
+            if (isStandalone && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+                e.preventDefault();
+                toggleStandaloneLineInNodeSelection(line);
+                return;
+            }
+
+            const shouldPreserveStandaloneGroupSelection = isStandalone && selectedType === "line" && activeSelectedLineIds.length > 1 && activeSelectedLineIds.includes(line.id);
+            if (!shouldPreserveStandaloneGroupSelection) {
+                selectElement(line.id, "line");
+            }
+            if (isStandalone) {
+                beginStandaloneLineDrag(line, e);
+            } else if (wasSelected) {
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            }
+        });
+        (svgOverlayHit || targetSvg).appendChild(overlay);
+
+        const activeLineIds = getActiveSelectedLineIds();
+        const isSingleSelectedLine = selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id;
+        if (lineHandlesLayer) {
+            const hasLabel = typeof line.label === "string" && line.label.trim().length > 0;
+            if (hasLabel || isSingleSelectedLine) {
+                const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
+                const offset = getLineLabelOffset(line);
+                const labelEl = document.createElement("div");
+                labelEl.className = "line-label" + (isSingleSelectedLine ? " selected" : "") + (hasLabel ? "" : " placeholder");
+                labelEl.style.left = `${Math.round(anchor.x + offset.x)}px`;
+                labelEl.style.top = `${Math.round(anchor.y + offset.y)}px`;
+                labelEl.style.fontSize = `${Math.max(10, Number(line.labelSize) || 14)}px`;
+                if (hasLabel) {
+                    labelEl.innerHTML = sanitizeTextHtml(line.label);
+                } else {
+                    labelEl.textContent = "Line text";
+                }
+                labelEl.title = hasLabel ? "Click to edit. Shift+drag to move line text" : "Add text in properties, then click to edit or Shift+drag to move";
+                labelEl.addEventListener("pointerdown", (e) => {
+                    if (editingLineLabelId === line.id) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    if (!(selectedType === "line" && selectedId === line.id)) {
+                        selectedId = line.id;
+                        selectedType = "line";
+                        selectedNodeIds = new Set();
+                        document.body.classList.add("line-edit-mode");
+                        updatePropertiesPanel();
+                    }
+
+                    if (e.shiftKey) {
+                        draggingLineLabelId = line.id;
+                        lineLabelDragMoved = false;
+                        lineLabelDragStarted = false;
+                        lineLabelDragStartMouse = { x: e.clientX, y: e.clientY };
+                        lineLabelDragStartOffset = getLineLabelOffset(line);
+                        document.body.classList.add("line-label-dragging");
+                        return;
+                    }
+
+                    startLineLabelEdit(line.id, labelEl);
+                });
+                lineHandlesLayer.appendChild(labelEl);
+            }
+        }
+
+        if (selectedType === "line" && activeLineIds.length === 1 && activeLineIds[0] === line.id && lineHandlesLayer) {
+            const routePoint = getLineRouteHandlePoint(line, fromCoords, toCoords);
+            const routeHandle = document.createElement("div");
+            routeHandle.className = "line-route-handle";
+            routeHandle.style.left = `${routePoint.x}px`;
+            routeHandle.style.top = `${routePoint.y}px`;
+            routeHandle.title = "Drag to reroute line";
+            routeHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineRouteDrag(line, e, fromCoords, toCoords);
+            });
+            routeHandle.addEventListener("dblclick", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                delete line.manualWaypoint;
+                saveHistory();
+                saveAutosave();
+                renderConnectors();
+            });
+            lineHandlesLayer.appendChild(routeHandle);
+
+            const beginLineEndDrag = (end) => {
+                selectElement(line.id, "line");
+                draggingNodeId = null;
+                resizingNodeId = null;
+                draggingTextNodeId = null;
+                activePortNodeId = null;
+                activePortName = null;
+                draggingLineEnd = { lineId: line.id, end };
+                lineEndSnapTarget = null;
+                lineEndDragMoved = false;
+                draggingStandaloneLineId = null;
+                draggingLineLabelId = null;
+                document.body.classList.add("line-end-dragging");
+            };
+
+            const fromHandle = document.createElement("div");
+            fromHandle.className = "line-end-handle-ui";
+            fromHandle.style.left = `${fromCoords.x}px`;
+            fromHandle.style.top = `${fromCoords.y}px`;
+            fromHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineEndDrag("from");
+            });
+            lineHandlesLayer.appendChild(fromHandle);
+
+            const toHandle = document.createElement("div");
+            toHandle.className = "line-end-handle-ui";
+            toHandle.style.left = `${toCoords.x}px`;
+            toHandle.style.top = `${toCoords.y}px`;
+            toHandle.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineEndDrag("to");
+            });
+            lineHandlesLayer.appendChild(toHandle);
+
+            // SVG fallback hit targets: catches pointer even if HTML handles are obscured by browser quirks.
+            const fromHit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            fromHit.setAttribute("cx", fromCoords.x);
+            fromHit.setAttribute("cy", fromCoords.y);
+            fromHit.setAttribute("r", "14");
+            fromHit.setAttribute("class", "line-end-hit-target");
+            fromHit.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineEndDrag("from");
+            });
+            (svgOverlayHit || targetSvg).appendChild(fromHit);
+
+            const toHit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            toHit.setAttribute("cx", toCoords.x);
+            toHit.setAttribute("cy", toCoords.y);
+            toHit.setAttribute("r", "14");
+            toHit.setAttribute("class", "line-end-hit-target");
+            toHit.addEventListener("pointerdown", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                beginLineEndDrag("to");
+            });
+            (svgOverlayHit || targetSvg).appendChild(toHit);
+        }
+    });
+
+    // 2. Draw line preview if currently drawing
+    if (activePortNodeId && activePortName && lineDrawingMousePos) {
+        const fromCoords = getPortCoords(activePortNodeId)[activePortName];
+        let pathD = "";
+        
+        if (hoveredPortNodeId && hoveredPortName) {
+            // Snapped target preview
+            const toCoords = getPortCoords(hoveredPortNodeId)[hoveredPortName];
+            pathD = getOrthogonalPath(fromCoords.x, fromCoords.y, activePortName, toCoords.x, toCoords.y, hoveredPortName);
+        } else {
+            // Free floating preview
+            pathD = `M ${fromCoords.x} ${fromCoords.y} L ${lineDrawingMousePos.x} ${lineDrawingMousePos.y}`;
+        }
+        
+        const previewPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        previewPath.setAttribute("d", pathD);
+        previewPath.setAttribute("class", "connector-line preview");
+        previewPath.setAttribute("marker-end", "url(#arrow-end-selected-front)");
+        (svgOverlayFront || svgOverlayBack).appendChild(previewPath);
+    }
+
+    renderNodeResizeHandles();
+}
+
+function tryStartNodeDragFromPointer(e) {
+    const stack = document.elementsFromPoint(e.clientX, e.clientY);
+    const nodeEl = stack.find(el => el && el.classList && el.classList.contains("node"));
+    if (!nodeEl) return false;
+
+    const id = String(nodeEl.id || "").replace("node-", "");
+    if (!id || !nodes[id] || draggingLineEnd || document.body.classList.contains("line-end-dragging")) {
+        return false;
+    }
+
+    e.stopPropagation();
+
+    const isToggleSelection = e.ctrlKey || e.metaKey;
+    if (isToggleSelection) {
+        selectElement(id, "node", { toggle: true });
+        if (!selectedNodeIds.has(id)) return true;
+    } else if (!(selectedType === "node" && selectedNodeIds.has(id))) {
+        selectElement(id, "node");
+    }
+
+    draggingNodeId = id;
+    dragStartMouse = { x: e.clientX, y: e.clientY };
+    dragStartNodePositions = {};
+    const dragTargets = (selectedType === "node" && selectedNodeIds.size > 0)
+        ? Array.from(selectedNodeIds)
+        : [id];
+    dragTargets.forEach(nodeId => {
+        if (!nodes[nodeId]) return;
+        dragStartNodePositions[nodeId] = { x: nodes[nodeId].x, y: nodes[nodeId].y };
+    });
+
+    try { nodeEl.setPointerCapture(e.pointerId); } catch (err) {}
+    return true;
+}
+
+function renderNodeResizeHandles() {
+    if (!nodeHandlesLayer) return;
+    if (!(selectedType === "node" && selectedNodeIds.size === 1 && selectedId && nodes[selectedId])) return;
+
+    const node = nodes[selectedId];
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "resize-handle";
+    resizeHandle.style.left = `${node.x + node.width / 2 - 9}px`;
+    resizeHandle.style.top = `${node.y + node.height / 2 - 9}px`;
+    resizeHandle.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        resizingNodeId = node.id;
+        resizeStartMouse = { x: e.clientX, y: e.clientY };
+        resizeStartNodeSize = { width: node.width, height: node.height };
+        resizeHandle.setPointerCapture(e.pointerId);
+    });
+    nodeHandlesLayer.appendChild(resizeHandle);
+}
+
+function getPortVectorOffset(portName, offset) {
+    switch (portName) {
+        case "top": return { x: 0, y: -offset };
+        case "right": return { x: offset, y: 0 };
+        case "bottom": return { x: 0, y: offset };
+        case "left": return { x: -offset, y: 0 };
+    }
+}
+
+function getOrthogonalPolyline(x1, y1, port1, x2, y2, port2) {
+    const buffer = 24;
+
+    const startOffset = getPortVectorOffset(port1, buffer);
+    const endOffset = getPortVectorOffset(port2, buffer);
+
+    const px1 = x1 + startOffset.x;
+    const py1 = y1 + startOffset.y;
+    const px2 = x2 + endOffset.x;
+    const py2 = y2 + endOffset.y;
+
+    const points = [
+        { x: x1, y: y1 },
+        { x: px1, y: py1 }
+    ];
+
+    if (port1 === "left" || port1 === "right") {
+        if (port2 === "left" || port2 === "right") {
+            const midX = (px1 + px2) / 2;
+            points.push({ x: midX, y: py1 }, { x: midX, y: py2 }, { x: px2, y: py2 });
+        } else {
+            points.push({ x: px2, y: py1 }, { x: px2, y: py2 });
+        }
+    } else {
+        if (port2 === "top" || port2 === "bottom") {
+            const midY = (py1 + py2) / 2;
+            points.push({ x: px1, y: midY }, { x: px2, y: midY }, { x: px2, y: py2 });
+        } else {
+            points.push({ x: px1, y: py2 }, { x: px2, y: py2 });
+        }
+    }
+
+    points.push({ x: x2, y: y2 });
+    return points;
+}
+
+// Clean right-angle elbow routing
+function getOrthogonalPath(x1, y1, port1, x2, y2, port2) {
+    const points = getOrthogonalPolyline(x1, y1, port1, x2, y2, port2);
+    return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+}
+
+function getOrthogonalPolylineWithWaypoint(fromCoords, toCoords, waypoint) {
+    if (!waypoint) return [fromCoords, toCoords];
+
+    const p = [
+        { x: fromCoords.x, y: fromCoords.y },
+        { x: waypoint.x, y: fromCoords.y },
+        { x: waypoint.x, y: waypoint.y },
+        { x: toCoords.x, y: waypoint.y },
+        { x: toCoords.x, y: toCoords.y }
+    ];
+
+    return p.filter((point, idx) => idx === 0 || point.x !== p[idx - 1].x || point.y !== p[idx - 1].y);
+}
+
+function getLineOrthogonalPolyline(line, fromCoords, toCoords) {
+    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return getOrthogonalPolylineWithWaypoint(fromCoords, toCoords, line.manualWaypoint);
+    }
+
+    return getOrthogonalPolyline(fromCoords.x, fromCoords.y, line.fromPort, toCoords.x, toCoords.y, line.toPort);
+}
+
+function getLineStraightPolyline(line, fromCoords, toCoords) {
+    if (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return [
+            { x: fromCoords.x, y: fromCoords.y },
+            { x: line.manualWaypoint.x, y: line.manualWaypoint.y },
+            { x: toCoords.x, y: toCoords.y }
+        ];
+    }
+
+    return [fromCoords, toCoords];
+}
+
+function getLinePathD(line, fromCoords, toCoords) {
+    if (isBraceGlyphType(line.glyphType)) {
+        return getBracePathD(line, fromCoords, toCoords);
+    }
+
+    if (line.lineType === "straight") {
+        const points = getLineStraightPolyline(line, fromCoords, toCoords);
+        return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+    }
+
+    if (line.lineType === "curved") {
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            return `M ${fromCoords.x} ${fromCoords.y} Q ${line.manualWaypoint.x} ${line.manualWaypoint.y}, ${toCoords.x} ${toCoords.y}`;
+        }
+
+        const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+        const ctrlOffset = Math.min(120, distance * 0.4);
+        const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+        const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+        return `M ${fromCoords.x} ${fromCoords.y} C ${fromCoords.x + ctrl1.x} ${fromCoords.y + ctrl1.y}, ${toCoords.x + ctrl2.x} ${toCoords.y + ctrl2.y}, ${toCoords.x} ${toCoords.y}`;
+    }
+
+    const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+    return points.reduce((acc, p, i) => acc + (i === 0 ? `M ${p.x} ${p.y}` : ` L ${p.x} ${p.y}`), "");
+}
+
+function getBraceGeometry(line, fromCoords, toCoords) {
+    const dx = toCoords.x - fromCoords.x;
+    const dy = toCoords.y - fromCoords.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const midX = (fromCoords.x + toCoords.x) / 2;
+    const midY = (fromCoords.y + toCoords.y) / 2;
+    const ux = dx / len;
+    const uy = dy / len;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const normalizedGlyph = normalizeLineGlyphType(line?.glyphType);
+    const side = normalizedGlyph === "brace-left" ? 1 : -1;
+
+    const depth = Math.max(18, Math.min(56, len * 0.22));
+    const stemOffset = { x: nx * side * depth, y: ny * side * depth };
+
+    const topCorner = {
+        x: fromCoords.x + stemOffset.x,
+        y: fromCoords.y + stemOffset.y
+    };
+    const bottomCorner = {
+        x: toCoords.x + stemOffset.x,
+        y: toCoords.y + stemOffset.y
+    };
+    const center = (line && line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y))
+        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
+        : { x: midX + stemOffset.x, y: midY + stemOffset.y };
+
+    return {
+        center,
+        topCorner,
+        bottomCorner,
+        startTangent: {
+            x: topCorner.x - fromCoords.x,
+            y: topCorner.y - fromCoords.y
+        },
+        endTangent: {
+            x: toCoords.x - bottomCorner.x,
+            y: toCoords.y - bottomCorner.y
+        },
+        axis: { x: ux, y: uy }
+    };
+}
+
+function getBracePathD(line, fromCoords, toCoords) {
+    const geom = getBraceGeometry(line, fromCoords, toCoords);
+    return `M ${fromCoords.x} ${fromCoords.y} L ${geom.topCorner.x} ${geom.topCorner.y} L ${geom.bottomCorner.x} ${geom.bottomCorner.y} L ${toCoords.x} ${toCoords.y}`;
+}
+
+function getLineRouteHandlePoint(line, fromCoords, toCoords) {
+    if (isBraceGlyphType(line.glyphType)) {
+        return getBraceGeometry(line, fromCoords, toCoords).center;
+    }
+
+    if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+        return { x: line.manualWaypoint.x, y: line.manualWaypoint.y };
+    }
+
+    if (line.lineType === "straight" || line.lineType === "curved") {
+        return {
+            x: (fromCoords.x + toCoords.x) / 2,
+            y: (fromCoords.y + toCoords.y) / 2
+        };
+    }
+
+    const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+    if (points.length < 2) {
+        return {
+            x: (fromCoords.x + toCoords.x) / 2,
+            y: (fromCoords.y + toCoords.y) / 2
+        };
+    }
+
+    const midIndex = Math.max(0, Math.floor((points.length - 2) / 2));
+    const a = points[midIndex];
+    const b = points[midIndex + 1];
+    return {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2
+    };
+}
+
+function beginLineRouteDrag(line, e, fromCoords, toCoords) {
+    if (!line) return;
+
+    draggingNodeId = null;
+    resizingNodeId = null;
+    draggingTextNodeId = null;
+    activePortNodeId = null;
+    activePortName = null;
+    draggingLineEnd = null;
+    lineEndSnapTarget = null;
+
+    const existing = line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)
+        ? { x: line.manualWaypoint.x, y: line.manualWaypoint.y }
+        : null;
+    lineRouteDragStartWaypoint = existing;
+
+    const coords = screenToCanvas(e.clientX, e.clientY);
+    const fallback = getLineRouteHandlePoint(line, fromCoords, toCoords);
+    line.manualWaypoint = {
+        x: snap(Number.isFinite(coords.x) ? coords.x : fallback.x),
+        y: snap(Number.isFinite(coords.y) ? coords.y : fallback.y)
+    };
+    draggingLineRouteId = line.id;
+    document.body.classList.add("line-route-dragging");
+    renderConnectors();
+}
+
+// --- Text Inline Editing ---
+let editingNodeId = null;
+function startTextEdit(nodeId) {
+    if (editingNodeId || (nodes[nodeId] && nodes[nodeId].type === "image")) return;
+    
+    editingNodeId = nodeId;
+    const nodeEl = document.getElementById("node-" + nodeId);
+    const textSpan = nodeEl.querySelector(".node-text");
+    
+    textSpan.contentEditable = "true";
+    textSpan.classList.add("node-editor");
+    textSpan.focus();
+    
+    // Select text range
+    document.execCommand('selectAll', false, null);
+    
+    const originalText = nodes[nodeId].text || "";
+    
+    textSpan.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            document.execCommand("bold", false, null);
+            return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            textSpan.blur();
+        }
+        if (e.key === "Escape") {
+            textSpan.innerHTML = sanitizeTextHtml(originalText);
+            editingNodeId = null;
+            textSpan.blur();
+            render();
+        }
+    });
+    
+    textSpan.addEventListener("blur", () => {
+        const text = sanitizeTextHtml(textSpan.innerHTML);
+        textSpan.contentEditable = "false";
+        textSpan.classList.remove("node-editor");
+        
+        if (text !== originalText) {
+            nodes[nodeId].text = text;
+            saveHistory();
+            saveAutosave();
+        }
+        editingNodeId = null;
+        render();
+        updatePropertiesPanel();
+    }, { once: true });
+}
+
+function startLineLabelEdit(lineId, labelEl) {
+    const line = lines.find((l) => l.id === lineId);
+    if (!line || !labelEl) return;
+
+    editingLineLabelId = lineId;
+    draggingLineLabelId = null;
+    lineLabelDragMoved = false;
+    lineLabelDragStarted = false;
+    document.body.classList.remove("line-label-dragging");
+
+    const originalText = String(line.label || "");
+    labelEl.contentEditable = "true";
+    labelEl.classList.add("line-label-editor");
+    labelEl.classList.remove("placeholder");
+    labelEl.innerHTML = sanitizeTextHtml(originalText);
+    labelEl.focus();
+    document.execCommand("selectAll", false, null);
+
+    const finishEdit = (cancel = false) => {
+        if (editingLineLabelId !== lineId) return;
+
+        editingLineLabelId = null;
+        labelEl.contentEditable = "false";
+        labelEl.classList.remove("line-label-editor");
+
+        if (cancel) {
+            line.label = originalText;
+            updatePropertiesPanel();
+            renderConnectors();
+            return;
+        }
+
+        const nextText = sanitizeTextHtml(labelEl.innerHTML || "");
+        if (line.label !== nextText) {
+            line.label = nextText;
+            saveHistory();
+            saveAutosave();
+        }
+        updatePropertiesPanel();
+        renderConnectors();
+    };
+
+    labelEl.onkeydown = (e) => {
+        e.stopPropagation();
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+            e.preventDefault();
+            document.execCommand("bold", false, null);
+            return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            labelEl.blur();
+        }
+        if (e.key === "Escape") {
+            e.preventDefault();
+            finishEdit(true);
+        }
+    };
+
+    labelEl.onblur = () => finishEdit(false);
+}
+
+// --- Selection & Properties Update ---
+function selectElement(id, type = null, options = {}) {
+
+    if (!id || !type) {
+        selectedId = null;
+        selectedType = null;
+        selectedNodeIds = new Set();
+    } else if (type === "line") {
+        selectedId = id;
+        selectedType = "line";
+        selectedNodeIds = new Set();
+    } else if (type === "node") {
+        selectedType = "node";
+        if (options.toggle) {
+            if (selectedNodeIds.has(id)) {
+                selectedNodeIds.delete(id);
+                if (selectedId === id) {
+                    if (selectedNodeIds.size > 0) {
+                        const selectedIds = Array.from(selectedNodeIds);
+                        selectedId = selectedIds[selectedIds.length - 1];
+                    } else {
+                        selectedId = null;
+                    }
+                }
+                if (selectedNodeIds.size === 0) {
+                    selectedType = null;
+                    selectedId = null;
+                }
+            } else {
+                selectedNodeIds.add(id);
+                selectedId = id;
+            }
+        } else {
+            selectedNodeIds = new Set([id]);
+            selectedId = id;
+        }
+    }
+
+    document.body.classList.toggle("line-edit-mode", selectedType === "line" && !!selectedId);
+    document.body.classList.toggle("node-multi-select-mode", selectedType === "node" && selectedNodeIds.size > 1);
+    
+    // Update visual nodes selected state
+    Object.keys(nodes).forEach(nodeId => {
+        const el = document.getElementById("node-" + nodeId);
+        if (el) el.classList.toggle("selected", selectedType === "node" && selectedNodeIds.has(nodeId));
+    });
+    
+    updatePropertiesPanel();
+    renderConnectors();
+}
+
+function updatePropertiesPanel() {
+    if (!selectedId && selectedNodeIds.size === 0) {
+        propertiesPanel.style.display = "none";
+        propNodeSection.style.display = "none";
+        propLineSection.style.display = "none";
+        return;
+    }
+    
+    propertiesPanel.style.display = "flex";
+    
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        propNodeSection.style.display = "block";
+        propLineSection.style.display = "none";
+
+        const referenceNodeId = selectedId && nodes[selectedId] ? selectedId : Array.from(selectedNodeIds).find(nodeId => !!nodes[nodeId]);
+        const node = referenceNodeId ? nodes[referenceNodeId] : null;
+        if (!node) {
+            propertiesPanel.style.display = "none";
+            propNodeSection.style.display = "none";
+            propLineSection.style.display = "none";
+            return;
+        }
+
+        propText.value = node.text;
+        propTextSize.value = node.textSize || 14;
+        propUrl.value = node.url || "";
+        propTextPosition.value = node.textPosition || "center";
+        propNodeWidth.value = Math.round(node.width || 120);
+        propNodeHeight.value = Math.round(node.height || 60);
+
+        const btnMatchSizeGroup = document.getElementById("prop-match-size-group");
+        if (btnMatchSizeGroup) {
+            btnMatchSizeGroup.style.display = selectedNodeIds.size > 1 ? "block" : "none";
+        }
+        const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+        propCropLeft.value = Math.round((crop.left || 0) * 100);
+        propCropTop.value = Math.round((crop.top || 0) * 100);
+        propCropRight.value = Math.round((crop.right || 0) * 100);
+        propCropBottom.value = Math.round((crop.bottom || 0) * 100);
+        propImageCropGroup.style.display = node.type === "image" ? "block" : "none";
+        propBorderWidth.value = node.borderWidth;
+        propBorderStyle.value = node.borderStyle;
+        
+        if (propTextBold) {
+            propTextBold.classList.toggle("active", /<(b|strong)\b/i.test(node.text || ""));
+        }
+        
+        // update swatches selected ring
+        document.querySelectorAll("#prop-bgcolor-grid .color-swatch").forEach(s => {
+            s.classList.toggle("selected", s.dataset.color === node.bgColor);
+        });
+        document.querySelectorAll("#prop-bordercolor-grid .color-swatch").forEach(s => {
+            s.classList.toggle("selected", s.dataset.color === node.borderColor);
+        });
+    } else if (selectedType === "line") {
+        propNodeSection.style.display = "none";
+        propLineSection.style.display = "block";
+        
+        const lineIds = getActiveSelectedLineIds();
+        const referenceLineId = lineIds.length > 0 ? lineIds[lineIds.length - 1] : selectedId;
+        const line = lines.find(l => l.id === referenceLineId);
+        if (line) {
+            propLineType.value = line.lineType;
+            propLineStyle.value = line.lineStyle;
+            propLineWidth.value = line.thickness;
+            propLineArrows.value = line.hasArrow;
+            propLineText.value = line.label || "";
+            propLineTextSize.value = String(Math.max(10, Number(line.labelSize) || 14));
+            
+            if (propLineTextBold) {
+                propLineTextBold.classList.toggle("active", /<(b|strong)\b/i.test(line.label || ""));
+            }
+
+            document.querySelectorAll("#prop-linecolor-grid .color-swatch").forEach(s => {
+                s.classList.toggle("selected", s.dataset.color === line.color);
+            });
+        }
+    }
+}
+
+// Helper to apply bold to highlighted text inside textarea inputs
+function applyBoldToTextarea(textarea) {
+    if (!textarea) return false;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const val = textarea.value || "";
+
+    if (typeof start !== "number" || typeof end !== "number") return false;
+
+    if (start === end) {
+        const before = val.substring(0, start);
+        const after = val.substring(end);
+        textarea.value = before + "<b>bold text</b>" + after;
+        textarea.selectionStart = start + 3;
+        textarea.selectionEnd = start + 12;
+        return true;
+    }
+
+    const selectedText = val.substring(start, end);
+    const before = val.substring(0, start);
+    const after = val.substring(end);
+
+    if ((selectedText.startsWith("<b>") && selectedText.endsWith("</b>")) || 
+        (selectedText.startsWith("<strong>") && selectedText.endsWith("</strong>"))) {
+        const tagLen = selectedText.startsWith("<b>") ? 3 : 8;
+        const closeLen = selectedText.startsWith("<b>") ? 4 : 9;
+        const unwrapped = selectedText.substring(tagLen, selectedText.length - closeLen);
+        textarea.value = before + unwrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + unwrapped.length;
+    } else {
+        const wrapped = `<b>${selectedText}</b>`;
+        textarea.value = before + wrapped + after;
+        textarea.selectionStart = start;
+        textarea.selectionEnd = start + wrapped.length;
+    }
+    return true;
+}
+
+// Properties changes handlers
+function toggleSelectedNodeBold() {
+    if (document.activeElement === propText) {
+        applyBoldToTextarea(propText);
+        updateSelectedNodeText();
+        saveHistory();
+        saveAutosave();
+        updatePropertiesPanel();
+        return;
+    }
+    if (editingNodeId || (document.activeElement && document.activeElement.contentEditable === "true")) {
+        document.execCommand("bold", false, null);
+        return;
+    }
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            const node = nodes[nodeId];
+            if (!node) return;
+            const text = node.text || "";
+            if (text.startsWith("<b>") && text.endsWith("</b>")) {
+                node.text = text.substring(3, text.length - 4);
+            } else {
+                node.text = `<b>${text}</b>`;
+            }
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        updatePropertiesPanel();
+    }
+}
+
+function toggleSelectedLineBold() {
+    if (document.activeElement === propLineText) {
+        applyBoldToTextarea(propLineText);
+        updateSelectedLineText();
+        commitSelectedLineText();
+        updatePropertiesPanel();
+        return;
+    }
+    if (editingLineLabelId || (document.activeElement && document.activeElement.contentEditable === "true")) {
+        document.execCommand("bold", false, null);
+        return;
+    }
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        lineIds.forEach(id => {
+            const line = lines.find(l => l.id === id);
+            if (!line) return;
+            const label = line.label || "";
+            if (label.startsWith("<b>") && label.endsWith("</b>")) {
+                line.label = label.substring(3, label.length - 4);
+            } else {
+                line.label = `<b>${label}</b>`;
+            }
+        });
+        saveHistory();
+        saveAutosave();
+        renderConnectors();
+        updatePropertiesPanel();
+    }
+}
+
+function updateSelectedNodeText() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            nodes[nodeId].text = sanitizeTextHtml(propText.value);
+            const textSpan = document.querySelector(`#node-${nodeId} .node-text`);
+            if (textSpan) textSpan.innerHTML = sanitizeTextHtml(propText.value);
+        });
+    }
+}
+
+function updateSelectedNodeTextSize() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const textSize = parseInt(propTextSize.value, 10) || 14;
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].textSize = textSize;
+        });
+        render();
+    }
+}
+
+function updateSelectedNodeTextPosition() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const position = propTextPosition.value || "center";
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].textPosition = position;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedNodeUrl() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const raw = propUrl.value.trim();
+        const url = sanitizeUrl(raw);
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].url = url;
+        });
+        render();
+    }
+}
+
+function updateSelectedNodeWidth() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const width = Math.max(40, parseInt(propNodeWidth.value, 10) || nodes[nodeId].width || 120);
+            nodes[nodeId].width = snap(width);
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedNodeHeight() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId]) return;
+            const height = Math.max(30, parseInt(propNodeHeight.value, 10) || nodes[nodeId].height || 60);
+            nodes[nodeId].height = snap(height);
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedNodeCrop() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const left = Math.max(0, Math.min(90, parseInt(propCropLeft.value, 10) || 0)) / 100;
+        const top = Math.max(0, Math.min(90, parseInt(propCropTop.value, 10) || 0)) / 100;
+        const right = Math.max(0, Math.min(90, parseInt(propCropRight.value, 10) || 0)) / 100;
+        const bottom = Math.max(0, Math.min(90, parseInt(propCropBottom.value, 10) || 0)) / 100;
+
+        const maxLR = Math.max(0, 0.95 - right);
+        const safeLeft = Math.min(left, maxLR);
+        const maxTB = Math.max(0, 0.95 - bottom);
+        const safeTop = Math.min(top, maxTB);
+
+        let hasImageSelection = false;
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId] || nodes[nodeId].type !== "image") return;
+            hasImageSelection = true;
+            nodes[nodeId].crop = {
+                left: safeLeft,
+                top: safeTop,
+                right,
+                bottom
+            };
+        });
+
+        if (hasImageSelection) {
+            saveHistory();
+            saveAutosave();
+            render();
+        }
+    }
+}
+
+function resetSelectedNodeCrop() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        let hasImageSelection = false;
+        selectedNodeIds.forEach(nodeId => {
+            if (!nodes[nodeId] || nodes[nodeId].type !== "image") return;
+            hasImageSelection = true;
+            nodes[nodeId].crop = { left: 0, top: 0, right: 0, bottom: 0 };
+        });
+        if (!hasImageSelection) return;
+
+        propCropLeft.value = "0";
+        propCropTop.value = "0";
+        propCropRight.value = "0";
+        propCropBottom.value = "0";
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedNodeBorderWidth() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const borderWidth = parseInt(propBorderWidth.value, 10);
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderWidth = borderWidth;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedNodeBorderStyle() {
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const borderStyle = propBorderStyle.value;
+        selectedNodeIds.forEach(nodeId => {
+            if (nodes[nodeId]) nodes[nodeId].borderStyle = borderStyle;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function updateSelectedLineType() {
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.lineType = propLineType.value;
+        });
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedLineStyle() {
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.lineStyle = propLineStyle.value;
+        });
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedLineThickness() {
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        const thickness = parseFloat(propLineWidth.value);
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.thickness = thickness;
+        });
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedLineArrows() {
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        lineIds.forEach((lineId) => {
+            const line = lines.find(l => l.id === lineId);
+            if (line) line.hasArrow = propLineArrows.value;
+        });
+        saveHistory();
+        render();
+    }
+}
+
+function updateSelectedLineText() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        line.label = propLineText.value;
+    });
+    renderConnectors();
+}
+
+function commitSelectedLineText() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    let hasSelection = false;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        hasSelection = true;
+        line.label = propLineText.value;
+    });
+    if (!hasSelection) return;
+    saveHistory();
+    saveAutosave();
+    renderConnectors();
+}
+
+function updateSelectedLineTextSize() {
+    if (selectedType !== "line") return;
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return;
+    const size = Math.max(10, parseInt(propLineTextSize.value, 10) || 14);
+    let changed = false;
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+        if ((Number(line.labelSize) || 14) !== size) {
+            line.labelSize = size;
+            changed = true;
+        }
+    });
+    if (!changed) return;
+    saveHistory();
+    saveAutosave();
+    renderConnectors();
+}
+
+function setSelectedLineAsDefault() {
+    if (selectedType !== "line") {
+        alert("Select a line first.");
+        return;
+    }
+
+    const line = lines.find(l => l.id === selectedId);
+    if (!line) return;
+
+    defaultLineSettings = {
+        lineType: line.lineType || DEFAULT_LINE_SETTINGS.lineType,
+        lineStyle: line.lineStyle || DEFAULT_LINE_SETTINGS.lineStyle,
+        color: line.color || DEFAULT_LINE_SETTINGS.color,
+        thickness: Number.isFinite(Number(line.thickness)) ? Number(line.thickness) : DEFAULT_LINE_SETTINGS.thickness,
+        hasArrow: line.hasArrow || DEFAULT_LINE_SETTINGS.hasArrow
+    };
+    saveDefaultLineSettings();
+    saveStatus.textContent = "Default line updated";
+}
+
+function resetDefaultLineSettings() {
+    defaultLineSettings = { ...DEFAULT_LINE_SETTINGS };
+    localStorage.removeItem(DEFAULT_LINE_SETTINGS_KEY);
+    saveStatus.textContent = "Default line reset";
+}
+
+function deleteSelectedElement() {
+    if (!selectedId && selectedNodeIds.size === 0) return;
+    
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        const idsToDelete = new Set(selectedNodeIds);
+        idsToDelete.forEach(nodeId => {
+            delete nodes[nodeId];
+        });
+        lines = lines.filter(l => !idsToDelete.has(l.fromId) && !idsToDelete.has(l.toId));
+        cleanupOrphanLineAnchors();
+        saveHistory();
+        saveAutosave();
+        render();
+    } else if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length > 1) {
+            lines = lines.filter(l => !lineIds.includes(l.id));
+            cleanupOrphanLineAnchors();
+            saveHistory();
+            saveAutosave();
+            render();
+        } else {
+            deleteLine(selectedId);
+        }
+    }
+    selectElement(null);
+}
+
+function cleanupOrphanLineAnchors() {
+    const connectedNodeIds = new Set();
+    lines.forEach(line => {
+        if (line.fromId) connectedNodeIds.add(line.fromId);
+        if (line.toId) connectedNodeIds.add(line.toId);
+    });
+
+    Object.keys(nodes).forEach(nodeId => {
+        const node = nodes[nodeId];
+        if (!node || node.type !== "line-anchor") return;
+        if (!connectedNodeIds.has(nodeId)) {
+            delete nodes[nodeId];
+        }
+    });
+}
+
+function deleteNode(nodeId) {
+    if (nodes[nodeId]) {
+        delete nodes[nodeId];
+        // Remove connected lines
+        lines = lines.filter(l => l.fromId !== nodeId && l.toId !== nodeId);
+        cleanupOrphanLineAnchors();
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function deleteLine(lineId) {
+    lines = lines.filter(l => l.id !== lineId);
+    cleanupOrphanLineAnchors();
+    saveHistory();
+    saveAutosave();
+    render();
+}
+
+function bringToFront() {
+    if (hasActivePointerInteraction()) handleGlobalPointerAbort();
+
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        let maxZ = 10;
+        Object.values(nodes).forEach(n => {
+            if (n.zIndex && n.zIndex > maxZ) maxZ = n.zIndex;
+        });
+
+        const selectedNodes = Array.from(selectedNodeIds)
+            .filter(nodeId => !!nodes[nodeId])
+            .sort((a, b) => (nodes[a].zIndex || 10) - (nodes[b].zIndex || 10));
+        if (selectedNodes.length === 0) return;
+
+        selectedNodes.forEach((nodeId, index) => {
+            nodes[nodeId].zIndex = maxZ + 1 + index;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        return;
+    }
+
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        const selectedSet = new Set(lineIds);
+        const selectedLines = lines.filter((line) => selectedSet.has(line.id));
+        if (selectedLines.length === 0) return;
+        selectedLines.forEach((line) => {
+            line.zIndex = getNextFrontLineZIndex();
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function sendToBack() {
+    if (hasActivePointerInteraction()) handleGlobalPointerAbort();
+
+    if (selectedType === "node" && selectedNodeIds.size > 0) {
+        let minZ = 10;
+        Object.values(nodes).forEach(n => {
+            if (n.zIndex && n.zIndex < minZ) minZ = n.zIndex;
+        });
+
+        const selectedNodes = Array.from(selectedNodeIds)
+            .filter(nodeId => !!nodes[nodeId])
+            .sort((a, b) => (nodes[a].zIndex || 10) - (nodes[b].zIndex || 10));
+        if (selectedNodes.length === 0) return;
+
+        selectedNodes.forEach((nodeId, index) => {
+            nodes[nodeId].zIndex = minZ - selectedNodes.length + index;
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+        return;
+    }
+
+    if (selectedType === "line") {
+        const lineIds = getActiveSelectedLineIds();
+        if (lineIds.length === 0) return;
+        const selectedSet = new Set(lineIds);
+        const selectedLines = lines.filter((line) => selectedSet.has(line.id));
+        if (selectedLines.length === 0) return;
+        selectedLines.forEach((line) => {
+            line.zIndex = getNextBackLineZIndex();
+        });
+        saveHistory();
+        saveAutosave();
+        render();
+    }
+}
+
+function copySelectedElement() {
+    if (!selectedId || !selectedType) return;
+
+    if (selectedType === "node" && nodes[selectedId]) {
+        copiedElement = {
+            type: "node",
+            payload: JSON.parse(JSON.stringify(nodes[selectedId]))
+        };
+        pasteSerial = 0;
+        saveStatus.textContent = "Node copied";
+        return;
+    }
+
+    if (selectedType === "line") {
+        const line = lines.find(l => l.id === selectedId);
+        if (!line) return;
+        copiedElement = {
+            type: "line",
+            payload: JSON.parse(JSON.stringify(line))
+        };
+        pasteSerial = 0;
+        saveStatus.textContent = "Line copied";
+    }
+}
+
+function pasteCopiedElement() {
+    if (!copiedElement || !copiedElement.type || !copiedElement.payload) return;
+
+    pasteSerial += 1;
+    const offset = GRID_SIZE * pasteSerial;
+
+    if (copiedElement.type === "node") {
+        const sourceNode = copiedElement.payload;
+        const newIdPrefix = sourceNode.type === "image" ? "img_" : "node_";
+        const newId = `${newIdPrefix}${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const cloned = JSON.parse(JSON.stringify(sourceNode));
+        cloned.id = newId;
+        cloned.x = snap((Number(sourceNode.x) || 0) + offset);
+        cloned.y = snap((Number(sourceNode.y) || 0) + offset);
+        nodes[newId] = cloned;
+
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(newId, "node");
+        saveStatus.textContent = "Node pasted";
+        return;
+    }
+
+    if (copiedElement.type === "line") {
+        const sourceLine = copiedElement.payload;
+        const fromNode = nodes[sourceLine.fromId];
+        const toNode = nodes[sourceLine.toId];
+
+        if (!fromNode || !toNode) {
+            saveStatus.textContent = "Could not paste line (missing nodes)";
+            return;
+        }
+
+        let nextFromId = sourceLine.fromId;
+        let nextToId = sourceLine.toId;
+
+        // Standalone line-shapes use hidden line-anchor nodes.
+        // Clone and offset these anchors so pasted lines become independently draggable.
+        if (fromNode.type === "line-anchor" && toNode.type === "line-anchor") {
+            nextFromId = `line_anchor_${Date.now()}_${Math.floor(Math.random() * 1000)}_from`;
+            nextToId = `line_anchor_${Date.now()}_${Math.floor(Math.random() * 1000)}_to`;
+
+            nodes[nextFromId] = {
+                ...JSON.parse(JSON.stringify(fromNode)),
+                id: nextFromId,
+                x: snap((Number(fromNode.x) || 0) + offset),
+                y: snap((Number(fromNode.y) || 0) + offset)
+            };
+
+            nodes[nextToId] = {
+                ...JSON.parse(JSON.stringify(toNode)),
+                id: nextToId,
+                x: snap((Number(toNode.x) || 0) + offset),
+                y: snap((Number(toNode.y) || 0) + offset)
+            };
+        }
+
+        const newLineId = `line_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        lines.push({
+            ...JSON.parse(JSON.stringify(sourceLine)),
+            id: newLineId,
+            fromId: nextFromId,
+            toId: nextToId,
+            manualWaypoint: sourceLine.manualWaypoint
+                ? {
+                    x: snap((Number(sourceLine.manualWaypoint.x) || 0) + offset),
+                    y: snap((Number(sourceLine.manualWaypoint.y) || 0) + offset)
+                }
+                : null
+        });
+
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(newLineId, "line");
+        saveStatus.textContent = "Line pasted";
+    }
+}
+
+function nudgeSelectedNodesBy(dx, dy) {
+    if (selectedType !== "node" || selectedNodeIds.size === 0) return false;
+
+    const selectedNodes = Array.from(selectedNodeIds).filter((nodeId) => !!nodes[nodeId]);
+    if (selectedNodes.length === 0) return false;
+
+    selectedNodes.forEach((nodeId) => {
+        nodes[nodeId].x = Math.round((Number(nodes[nodeId].x) || 0) + dx);
+        nodes[nodeId].y = Math.round((Number(nodes[nodeId].y) || 0) + dy);
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
+function nudgeSelectedStandaloneLineBy(dx, dy) {
+    if (selectedType !== "line") return false;
+
+    const lineIds = getActiveSelectedLineIds();
+    if (lineIds.length === 0) return false;
+
+    lineIds.forEach((lineId) => {
+        const line = lines.find((l) => l.id === lineId);
+        if (!line) return;
+
+        const fromNode = nodes[line.fromId];
+        const toNode = nodes[line.toId];
+        const isStandalone = !!fromNode && !!toNode && fromNode.type === "line-anchor" && toNode.type === "line-anchor";
+        if (!isStandalone) return;
+
+        fromNode.x = Math.round((Number(fromNode.x) || 0) + dx);
+        fromNode.y = Math.round((Number(fromNode.y) || 0) + dy);
+        toNode.x = Math.round((Number(toNode.x) || 0) + dx);
+        toNode.y = Math.round((Number(toNode.y) || 0) + dy);
+
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            line.manualWaypoint = {
+                x: Math.round((Number(line.manualWaypoint.x) || 0) + dx),
+                y: Math.round((Number(line.manualWaypoint.y) || 0) + dy)
+            };
+        }
+    });
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
+function alignSelectedNodes(mode) {
+    if (selectedType !== "node" || selectedNodeIds.size < 2) return false;
+
+    const selectedNodes = Array.from(selectedNodeIds)
+        .map((nodeId) => nodes[nodeId])
+        .filter((node) => !!node);
+
+    if (selectedNodes.length < 2) return false;
+
+    const rects = selectedNodes.map((node) => {
+        const width = Number.isFinite(Number(node.width)) ? Number(node.width) : 120;
+        const height = Number.isFinite(Number(node.height)) ? Number(node.height) : 60;
+        const x = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
+        const y = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
+        return {
+            left: x - width / 2,
+            right: x + width / 2,
+            top: y - height / 2,
+            bottom: y + height / 2,
+            width,
+            height
+        };
+    });
+
+    const bounds = rects.reduce((acc, rect) => {
+        acc.left = Math.min(acc.left, rect.left);
+        acc.right = Math.max(acc.right, rect.right);
+        acc.top = Math.min(acc.top, rect.top);
+        acc.bottom = Math.max(acc.bottom, rect.bottom);
+        return acc;
+    }, { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity });
+
+    const centerX = (bounds.left + bounds.right) / 2;
+    const centerY = (bounds.top + bounds.bottom) / 2;
+    let hasChanges = false;
+
+    selectedNodes.forEach((node, index) => {
+        const rect = rects[index];
+        let nextX = Number.isFinite(Number(node.x)) ? Number(node.x) : 0;
+        let nextY = Number.isFinite(Number(node.y)) ? Number(node.y) : 0;
+
+        if (mode === "left") nextX = bounds.left + rect.width / 2;
+        else if (mode === "center") nextX = centerX;
+        else if (mode === "right") nextX = bounds.right - rect.width / 2;
+        else if (mode === "top") nextY = bounds.top + rect.height / 2;
+        else if (mode === "middle") nextY = centerY;
+        else if (mode === "bottom") nextY = bounds.bottom - rect.height / 2;
+
+        const snappedX = snap(nextX);
+        const snappedY = snap(nextY);
+
+        if (node.x !== snappedX || node.y !== snappedY) {
+            node.x = snappedX;
+            node.y = snappedY;
+            hasChanges = true;
+        }
+    });
+
+    if (!hasChanges) return false;
+
+    saveHistory();
+    saveAutosave();
+    render();
+    updatePropertiesPanel();
+    return true;
+}
+
+// --- Keyboard Handling ---
+function handleKeyDown(e) {
+    // Disable shortcuts if writing text or in modals
+    if (editingNodeId || document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA" || document.activeElement.contentEditable === "true") {
+        return;
+    }
+
+    const isCtrlOrCmd = e.ctrlKey || e.metaKey;
+
+    if (isCtrlOrCmd && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        if (selectedType === "node" && selectedNodeIds.size > 0) {
+            toggleSelectedNodeBold();
+        } else if (selectedType === "line") {
+            toggleSelectedLineBold();
+        }
+        return;
+    }
+
+    if (isCtrlOrCmd && e.shiftKey) {
+        let alignMode = null;
+        if (e.key === "ArrowLeft") alignMode = "left";
+        else if (e.key === "ArrowRight") alignMode = "right";
+        else if (e.key === "ArrowUp") alignMode = "top";
+        else if (e.key === "ArrowDown") alignMode = "bottom";
+        else if (e.key === "h" || e.key === "H") alignMode = "center";
+        else if (e.key === "v" || e.key === "V") alignMode = "middle";
+
+        if (alignMode && alignSelectedNodes(alignMode)) {
+            e.preventDefault();
+            return;
+        }
+    }
+
+    const arrowNudges = {
+        ArrowLeft: { dx: -1, dy: 0 },
+        ArrowRight: { dx: 1, dy: 0 },
+        ArrowUp: { dx: 0, dy: -1 },
+        ArrowDown: { dx: 0, dy: 1 }
+    };
+
+    if (arrowNudges[e.key]) {
+        const step = e.shiftKey ? 10 : 1;
+        const { dx, dy } = arrowNudges[e.key];
+        const moved = nudgeSelectedNodesBy(dx * step, dy * step) || nudgeSelectedStandaloneLineBy(dx * step, dy * step);
+        if (moved) e.preventDefault();
+        return;
+    }
+    
+    // Delete key
+    if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelectedElement();
+    }
+    
+    // F2 to Edit Text
+    if (e.key === "F2" && selectedType === "node" && selectedNodeIds.size === 1 && selectedId && nodes[selectedId]) {
+        e.preventDefault();
+        startTextEdit(selectedId);
+    }
+
+    // Ctrl/Cmd + C -> Copy selected object
+    if (isCtrlOrCmd && (e.key === "c" || e.key === "C")) {
+        if (selectedId && selectedType) {
+            e.preventDefault();
+            copySelectedElement();
+        }
+    }
+
+    // Ctrl/Cmd + V -> Paste copied object
+    if (isCtrlOrCmd && (e.key === "v" || e.key === "V")) {
+        if (copiedElement) {
+            e.preventDefault();
+            pasteCopiedElement();
+        }
+    }
+    
+    // Ctrl + Z -> Undo
+    if (isCtrlOrCmd && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        undo();
+    }
+    
+    // Ctrl + Y -> Redo
+    if (isCtrlOrCmd && (e.key === "y" || e.key === "Y")) {
+        e.preventDefault();
+        redo();
+    }
+    
+    // Space -> Recenter
+    if (e.key === " " && document.activeElement.tagName !== "INPUT") {
+        e.preventDefault();
+        centerCanvas();
+    }
+    
+    // Escape -> Cancel active connection drag or deselect elements
+    if (e.key === "Escape") {
+        if (activePortNodeId) {
+            activePortNodeId = null;
+            activePortName = null;
+            lineDrawingMousePos = null;
+            hoveredPortNodeId = null;
+            hoveredPortName = null;
+            document.body.classList.remove("drawing-line");
+            document.querySelectorAll(".port").forEach(el => el.classList.remove("snapped"));
+            renderConnectors();
+        } else {
+            selectElement(null);
+        }
+    }
+}
+
+// --- Snap To Grid ---
+function toggleSnapGrid() {
+    snapGridEnabled = !snapGridEnabled;
+    updateSnapGridButtonState();
+}
+
+function updateSnapGridButtonState() {
+    btnSnapGrid.classList.toggle("active", snapGridEnabled);
+    btnSnapGrid.title = snapGridEnabled ? "Snap to Grid: ON" : "Snap to Grid: OFF";
+}
+
+// --- Clipboard Image Pasting ---
+function handleClipboardPaste(e) {
+    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (let item of items) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+            const file = item.getAsFile();
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const base64 = evt.target.result;
+                const img = new Image();
+                img.onload = function() {
+                    addNewImageNode(base64, img.naturalWidth, img.naturalHeight);
+                };
+                img.onerror = function() {
+                    addNewImageNode(base64);
+                };
+                img.src = base64;
+            };
+            reader.readAsDataURL(file);
+            e.preventDefault();
+            break;
+        }
+    }
+}
+
+function addNewImageNode(base64, naturalWidth = 0, naturalHeight = 0) {
+    const id = "img_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
+    
+    // Find viewport center in canvas space
+    const rect = workspace.getBoundingClientRect();
+    const center = screenToCanvas(rect.width / 2, rect.height / 2);
+    
+    // Setup default image bounds while preserving source aspect ratio.
+    let width = 220;
+    let height = 160;
+    if (naturalWidth > 0 && naturalHeight > 0) {
+        const maxW = 520;
+        const maxH = 360;
+        const scale = Math.min(maxW / naturalWidth, maxH / naturalHeight, 1);
+        width = Math.max(80, Math.round(naturalWidth * scale));
+        height = Math.max(60, Math.round(naturalHeight * scale));
+    }
+
+    nodes[id] = {
+        id: id,
+        type: "image",
+        imageUrl: base64,
+        x: snap(center.x),
+        y: snap(center.y),
+        width: snap(width),
+        height: snap(height),
+        crop: { left: 0, top: 0, right: 0, bottom: 0 },
+        text: "",
+        textOffset: { x: 0, y: 0 },
+        bgColor: "transparent",
+        borderColor: "transparent",
+        borderWidth: 0,
+        borderStyle: "solid",
+        url: ""
+    };
+    
+    saveHistory();
+    saveAutosave();
+    render();
+    selectElement(id, "node");
+}
+
+function getImageLibraryEntries() {
+    try {
+        const raw = localStorage.getItem(IMAGE_LIBRARY_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .filter((entry) => entry && typeof entry.imageUrl === "string" && entry.imageUrl.trim())
+            .map((entry) => ({
+                id: String(entry.id || ""),
+                name: String(entry.name || "Image"),
+                imageUrl: String(entry.imageUrl || ""),
+                updatedAt: Number(entry.updatedAt) || Date.now()
+            }));
+    } catch (err) {
+        return [];
+    }
+}
+
+function saveImageLibraryEntries(entries) {
+    localStorage.setItem(IMAGE_LIBRARY_STORAGE_KEY, JSON.stringify(entries));
+}
+
+function sanitizeImageLibraryName(name, fallback = "Image") {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) return fallback;
+    return trimmed.slice(0, 80);
+}
+
+function upsertImageLibraryEntry(imageUrl, name) {
+    const src = String(imageUrl || "").trim();
+    if (!src) return false;
+
+    const now = Date.now();
+    const entries = getImageLibraryEntries();
+    const existing = entries.find((entry) => entry.imageUrl === src);
+    if (existing) {
+        existing.name = sanitizeImageLibraryName(name, existing.name || "Image");
+        existing.updatedAt = now;
+    } else {
+        entries.push({
+            id: `imglib_${now}_${Math.floor(Math.random() * 1000)}`,
+            name: sanitizeImageLibraryName(name, "Image"),
+            imageUrl: src,
+            updatedAt: now
+        });
+    }
+
+    entries.sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    const trimmed = entries.slice(0, MAX_IMAGE_LIBRARY_ITEMS);
+    saveImageLibraryEntries(trimmed);
+    loadImageLibraryList();
+    return true;
+}
+
+function saveSelectedImageToLibrary() {
+    if (selectedType !== "node" || selectedNodeIds.size !== 1) {
+        alert("Select exactly one image node first.");
+        return;
+    }
+
+    const selectedNodeId = selectedId && selectedNodeIds.has(selectedId)
+        ? selectedId
+        : Array.from(selectedNodeIds)[0];
+    const node = nodes[selectedNodeId];
+    if (!node || node.type !== "image" || !node.imageUrl) {
+        alert("The selected node is not an image.");
+        return;
+    }
+
+    const suggestedName = sanitizeImageLibraryName(currentDocName ? `${currentDocName} image` : "Image", "Image");
+    const name = prompt("Name this image for your library:", suggestedName);
+    if (name === null) return;
+
+    const saved = upsertImageLibraryEntry(node.imageUrl, name);
+    if (!saved) {
+        alert("Could not save image to library.");
+        return;
+    }
+    saveStatus.textContent = "Image saved to library";
+}
+
+function handleImageLibraryFilePick(e) {
+    const file = (e.target.files && e.target.files[0]) || null;
+    if (!file) return;
+
+    if (!String(file.type || "").startsWith("image/")) {
+        alert("Please choose an image file.");
+        e.target.value = "";
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        const dataUrl = String(evt.target && evt.target.result ? evt.target.result : "");
+        const baseName = sanitizeImageLibraryName(file.name.replace(/\.[^/.]+$/, ""), "Image");
+        if (upsertImageLibraryEntry(dataUrl, baseName)) {
+            saveStatus.textContent = "Image added to library";
+        }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+}
+
+function insertImageFromLibraryEntry(entry) {
+    if (!entry || !entry.imageUrl) return;
+
+    loadImageElement(entry.imageUrl).then((img) => {
+        if (img) {
+            addNewImageNode(entry.imageUrl, img.naturalWidth, img.naturalHeight);
+        } else {
+            addNewImageNode(entry.imageUrl);
+        }
+        saveStatus.textContent = "Image inserted from library";
+    });
+}
+
+function deleteImageLibraryEntry(id, e) {
+    if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    const entries = getImageLibraryEntries();
+    const next = entries.filter((entry) => entry.id !== id);
+    saveImageLibraryEntries(next);
+    loadImageLibraryList();
+}
+
+function loadImageLibraryList() {
+    if (!imageLibraryList) return;
+
+    const entries = getImageLibraryEntries().sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
+    imageLibraryList.innerHTML = "";
+
+    if (entries.length === 0) {
+        imageLibraryList.innerHTML = '<div class="empty-state">No saved images.</div>';
+        return;
+    }
+
+    entries.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "image-library-item";
+        item.title = `Insert ${entry.name}`;
+        item.addEventListener("click", () => insertImageFromLibraryEntry(entry));
+
+        const thumb = document.createElement("img");
+        thumb.className = "image-library-thumb";
+        thumb.src = entry.imageUrl;
+        thumb.alt = entry.name;
+
+        const name = document.createElement("span");
+        name.className = "image-library-name";
+        name.textContent = entry.name;
+
+        const actions = document.createElement("div");
+        actions.className = "map-actions";
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "map-action-btn delete";
+        deleteBtn.title = "Remove from image library";
+        deleteBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        deleteBtn.addEventListener("click", (e) => deleteImageLibraryEntry(entry.id, e));
+
+        actions.appendChild(deleteBtn);
+        item.appendChild(thumb);
+        item.appendChild(name);
+        item.appendChild(actions);
+        imageLibraryList.appendChild(item);
+    });
+}
+
+function getImageLibraryDrivePayload() {
+    return {
+        format: "flowcraft-image-library",
+        version: "1.0",
+        updatedAt: Date.now(),
+        images: getImageLibraryEntries()
+    };
+}
+
+function isImageLibraryDrivePayload(data) {
+    return !!data && typeof data === "object" && data.format === "flowcraft-image-library" && Array.isArray(data.images);
+}
+
+async function findImageLibraryDriveFileId() {
+    if (!accessToken) return "";
+
+    const query = `name='${IMAGE_LIBRARY_DRIVE_FILENAME}' and mimeType='application/json' and trashed=false`;
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&orderBy=modifiedTime desc&pageSize=1&fields=files(id,name,modifiedTime)`;
+    const response = await fetch(url, {
+        headers: {
+            "Authorization": `Bearer ${accessToken}`
+        }
+    });
+    if (!response.ok) throw new Error("Could not search Drive image library (HTTP " + response.status + ")");
+
+    const data = await response.json();
+    const file = Array.isArray(data.files) && data.files.length > 0 ? data.files[0] : null;
+    return file && file.id ? String(file.id) : "";
+}
+
+async function saveImageLibraryToDrive(options = {}) {
+    const silent = !!options.silent;
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+
+    const payload = getImageLibraryDrivePayload();
+    const content = JSON.stringify(payload, null, 2);
+
+    if (!silent) saveStatus.textContent = "Saving image library to Drive...";
+
+    try {
+        let driveFileId = currentImageLibraryDriveFileId;
+        if (!driveFileId) {
+            driveFileId = await findImageLibraryDriveFileId();
+        }
+
+        const metadata = {
+            name: IMAGE_LIBRARY_DRIVE_FILENAME,
+            mimeType: "application/json"
+        };
+
+        const boundary = "flowcraft_image_library_boundary";
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const closeDelim = "\r\n--" + boundary + "--";
+
+        let url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart";
+        let method = "POST";
+        if (driveFileId) {
+            url = `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=multipart`;
+            method = "PATCH";
+        }
+
+        const requestBody =
+            delimiter +
+            "Content-Type: application/json\r\n\r\n" +
+            JSON.stringify(metadata) +
+            delimiter +
+            "Content-Type: application/json\r\n\r\n" +
+            content +
+            closeDelim;
+
+        const response = await fetch(url, {
+            method,
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": `multipart/related; boundary=${boundary}`
+            },
+            body: requestBody
+        });
+
+        if (!response.ok) throw new Error("Drive upload failed (HTTP " + response.status + ")");
+
+        const file = await response.json();
+        currentImageLibraryDriveFileId = String(file.id || "");
+        if (currentImageLibraryDriveFileId) {
+            localStorage.setItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY, currentImageLibraryDriveFileId);
+        }
+
+        if (!silent) saveStatus.textContent = "Image library saved to Drive";
+    } catch (err) {
+        if (!silent) {
+            saveStatus.textContent = "Image library save failed";
+            alert("Could not save image library to Drive: " + err.message);
+        } else {
+            console.warn("Image library Drive save failed:", err);
+        }
+    }
+}
+
+async function loadImageLibraryFromDrive() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+
+    saveStatus.textContent = "Loading image library from Drive...";
+
+    try {
+        let driveFileId = currentImageLibraryDriveFileId;
+        if (!driveFileId) {
+            driveFileId = await findImageLibraryDriveFileId();
+        }
+        if (!driveFileId) {
+            saveStatus.textContent = "No image library on Drive";
+            alert("No saved image library file was found on Google Drive yet.");
+            return;
+        }
+
+        const url = `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`;
+        const response = await fetch(url, {
+            headers: {
+                "Authorization": `Bearer ${accessToken}`
+            }
+        });
+        if (!response.ok) throw new Error("Drive download failed (HTTP " + response.status + ")");
+
+        const data = JSON.parse(await response.text());
+        if (!isImageLibraryDrivePayload(data)) {
+            throw new Error("Drive file is not a valid FlowCraft image library.");
+        }
+
+        const entries = Array.isArray(data.images) ? data.images : [];
+        const normalized = entries
+            .filter((entry) => entry && typeof entry.imageUrl === "string" && entry.imageUrl.trim())
+            .map((entry) => ({
+                id: String(entry.id || `imglib_${Date.now()}_${Math.floor(Math.random() * 1000)}`),
+                name: sanitizeImageLibraryName(entry.name || "Image", "Image"),
+                imageUrl: String(entry.imageUrl || ""),
+                updatedAt: Number(entry.updatedAt) || Date.now()
+            }))
+            .slice(0, MAX_IMAGE_LIBRARY_ITEMS);
+
+        saveImageLibraryEntries(normalized);
+        loadImageLibraryList();
+
+        currentImageLibraryDriveFileId = driveFileId;
+        localStorage.setItem(IMAGE_LIBRARY_DRIVE_FILE_ID_KEY, driveFileId);
+        saveStatus.textContent = "Image library loaded from Drive";
+    } catch (err) {
+        saveStatus.textContent = "Image library load failed";
+        alert("Could not load image library from Drive: " + err.message);
+    }
+}
+
+// --- History Undo/Redo ---
+function saveHistory() {
+    // Clear redo
+    redoStack = [];
+    
+    undoStack.push(JSON.stringify({
+        nodes: nodes,
+        lines: lines,
+        name: currentDocName
+    }));
+    
+    if (undoStack.length > MAX_HISTORY) {
+        undoStack.shift();
+    }
+
+    scheduleDriveAutosave();
+}
+
+function undo() {
+    if (undoStack.length <= 1) return;
+    
+    const curr = undoStack.pop();
+    redoStack.push(curr);
+    
+    const prev = undoStack[undoStack.length - 1];
+    const data = JSON.parse(prev);
+    
+    loadSessionData(data);
+    selectElement(null);
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+    
+    const next = redoStack.pop();
+    undoStack.push(next);
+    
+    const data = JSON.parse(next);
+    loadSessionData(data);
+    selectElement(null);
+}
+
+function loadSessionData(data) {
+    resetTransientInteractions();
+    selectedId = null;
+    selectedType = null;
+    selectedNodeIds.clear();
+    copiedElement = null;
+
+    nodes = data.nodes || {};
+    lines = (data.lines || []).map((line, index) => ({
+        ...line,
+        zIndex: Number.isFinite(Number(line?.zIndex)) ? Number(line.zIndex) : (index % 2 === 0 ? -1 : 1)
+    }));
+    currentDocName = data.name || "Untitled Flowchart";
+    docTitle.textContent = currentDocName;
+    render();
+}
+
+function handleClearCanvas() {
+    if (confirm("Are you sure you want to clear the entire flowchart canvas?")) {
+        nodes = {};
+        lines = [];
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(null);
+    }
+}
+
+function handleNewFlowchart() {
+    if (confirm("Start a new flowchart project? Unsaved changes will be discarded.")) {
+        createStartingTemplate();
+        currentLocalSaveName = "";
+        currentDriveFileId = null;
+        saveHistory();
+        saveAutosave();
+        render();
+        selectElement(null);
+        centerCanvas();
+    }
+}
+
+// --- Local browser saves manager ---
+function handleSaveLocal() {
+    const isFirstLocalSave = !currentLocalSaveName;
+    const name = prompt("Enter a workspace name for this flowchart:", currentLocalSaveName || currentDocName);
+    if (name === null) return;
+    
+    const trimmed = name.trim() || "My Flowchart";
+    currentLocalSaveName = trimmed;
+    currentDocName = trimmed;
+    docTitle.textContent = trimmed;
+    
+    const saves = JSON.parse(localStorage.getItem("flowcraft_local_saves") || "{}");
+    saves[trimmed] = {
+        nodes: nodes,
+        lines: lines,
+        name: trimmed,
+        updatedAt: Date.now()
+    };
+    
+    localStorage.setItem("flowcraft_local_saves", JSON.stringify(saves));
+    saveStatus.textContent = "Saved locally";
+    loadLocalFilesList();
+    alert(`Project "${trimmed}" saved locally!`);
+
+    if (isFirstLocalSave) {
+        const shouldDownload = confirm("Do you want to choose a save location and export this as a JSON file now?");
+        if (shouldDownload) {
+            exportJsonFile({ forcePrompt: true });
+        }
+    }
+}
+
+function loadLocalSave(name) {
+    const saves = JSON.parse(localStorage.getItem("flowcraft_local_saves") || "{}");
+    if (saves[name]) {
+        currentLocalSaveName = name;
+        currentDriveFileId = null; // reset drive file ID
+        loadSessionData(saves[name]);
+        undoStack = [];
+        redoStack = [];
+        saveHistory();
+        centerCanvas();
+        saveStatus.textContent = "Saved locally";
+    }
+}
+
+function deleteLocalSave(name, e) {
+    e.stopPropagation();
+    if (!confirm(`Delete local save "${name}"?`)) return;
+    
+    const saves = JSON.parse(localStorage.getItem("flowcraft_local_saves") || "{}");
+    delete saves[name];
+    localStorage.setItem("flowcraft_local_saves", JSON.stringify(saves));
+    
+    if (currentLocalSaveName === name) currentLocalSaveName = "";
+    loadLocalFilesList();
+}
+
+function loadLocalFilesList() {
+    const saves = JSON.parse(localStorage.getItem("flowcraft_local_saves") || "{}");
+    const names = Object.keys(saves).sort((a,b) => saves[b].updatedAt - saves[a].updatedAt);
+    
+    localFilesList.innerHTML = "";
+    if (names.length === 0) {
+        localFilesList.innerHTML = '<div class="empty-state">No local saves.</div>';
+        return;
+    }
+    
+    names.forEach(name => {
+        const item = document.createElement("div");
+        item.className = "saved-map-item";
+        item.addEventListener("click", () => loadLocalSave(name));
+        
+        const span = document.createElement("span");
+        span.className = "map-name";
+        span.textContent = name;
+        
+        const actions = document.createElement("div");
+        actions.className = "map-actions";
+        
+        const delBtn = document.createElement("button");
+        delBtn.className = "map-action-btn delete";
+        delBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+        delBtn.addEventListener("click", (e) => deleteLocalSave(name, e));
+        
+        actions.appendChild(delBtn);
+        item.appendChild(span);
+        item.appendChild(actions);
+        localFilesList.appendChild(item);
+    });
+}
+
+function saveAutosave() {
+    localStorage.setItem("flowcraft_autosave", JSON.stringify({
+        nodes: nodes,
+        lines: lines,
+        name: currentDocName
+    }));
+    scheduleDriveAutosave();
+}
+
+function clearDriveAutosaveState() {
+    if (driveAutosaveTimer) {
+        clearTimeout(driveAutosaveTimer);
+        driveAutosaveTimer = null;
+    }
+    driveAutosaveInFlight = false;
+    lastDriveSavedFingerprint = "";
+}
+
+function startDriveAutosaveHeartbeat() {
+    if (driveAutosaveHeartbeat) return;
+    driveAutosaveHeartbeat = setInterval(() => {
+        if (!canAutosaveToDrive() || driveAutosaveInFlight) return;
+        const currentFingerprint = JSON.stringify(getExportPayload());
+        if (currentFingerprint === lastDriveSavedFingerprint) return;
+        triggerDriveAutosave();
+    }, DRIVE_AUTOSAVE_INTERVAL_MS);
+}
+
+function canAutosaveToDrive() {
+    return !!accessToken && !!currentDriveFileId;
+}
+
+function scheduleDriveAutosave() {
+    if (!canAutosaveToDrive()) return;
+    const currentFingerprint = JSON.stringify(getExportPayload());
+    if (currentFingerprint === lastDriveSavedFingerprint) return;
+
+    if (driveAutosaveTimer) clearTimeout(driveAutosaveTimer);
+    driveAutosaveTimer = setTimeout(() => {
+        driveAutosaveTimer = null;
+        triggerDriveAutosave();
+    }, DRIVE_AUTOSAVE_INTERVAL_MS);
+
+    saveStatus.textContent = "Changes pending (Drive autosave)";
+}
+
+async function triggerDriveAutosave() {
+    if (!canAutosaveToDrive() || driveAutosaveInFlight) return;
+
+    const currentFingerprint = JSON.stringify(getExportPayload());
+    if (currentFingerprint === lastDriveSavedFingerprint) return;
+
+    driveAutosaveInFlight = true;
+    try {
+        await saveToGoogleDrive({ silent: true, allowRetryOnAuthFailure: true, source: "autosave" });
+    } finally {
+        driveAutosaveInFlight = false;
+        const latestFingerprint = JSON.stringify(getExportPayload());
+        if (canAutosaveToDrive() && latestFingerprint !== lastDriveSavedFingerprint) {
+            scheduleDriveAutosave();
+        }
+    }
+}
+
+// --- Import/Export Local Files JSON ---
+function isObject(val) {
+    return !!val && typeof val === "object" && !Array.isArray(val);
+}
+
+function getByPath(obj, path) {
+    if (!obj || !path) return undefined;
+    const parts = String(path).split(".");
+    let curr = obj;
+    for (const part of parts) {
+        if (!isObject(curr) || !(part in curr)) return undefined;
+        curr = curr[part];
+    }
+    return curr;
+}
+
+function readNum(obj, keys, fallback = 0) {
+    for (const key of keys) {
+        const val = getByPath(obj, key);
+        if (val === undefined || val === null) continue;
+        const n = Number(val);
+        if (Number.isFinite(n)) return n;
+    }
+    return fallback;
+}
+
+function readString(obj, keys, fallback = "") {
+    for (const key of keys) {
+        const val = getByPath(obj, key);
+        if (val === undefined || val === null) continue;
+        if (typeof val === "string" && val.trim()) return val;
+        if (typeof val === "number" || typeof val === "boolean") return String(val);
+    }
+    return fallback;
+}
+
+function isFlowcraftFormat(data) {
+    return isObject(data) && data.format === "flowcraft" && isObject(data.nodes);
+}
+
+function collectArrayCandidates(root, keys) {
+    if (!isObject(root)) return [];
+    const found = [];
+    keys.forEach(key => {
+        const val = getByPath(root, key);
+        if (Array.isArray(val)) found.push(...val);
+    });
+    return found;
+}
+
+function discoverArraysDeep(root, maxDepth = 5) {
+    const arrays = [];
+    const visited = new Set();
+
+    function walk(node, depth) {
+        if (depth > maxDepth || !node || typeof node !== "object") return;
+        if (visited.has(node)) return;
+        visited.add(node);
+
+        if (Array.isArray(node)) {
+            arrays.push(node);
+            node.forEach(item => walk(item, depth + 1));
+            return;
+        }
+
+        Object.keys(node).forEach(k => walk(node[k], depth + 1));
+    }
+
+    walk(root, 0);
+    return arrays;
+}
+
+function looksLikeLineItem(item) {
+    if (!isObject(item)) return false;
+    const typeHint = readString(item, ["type", "kind", "objectType", "class"], "").toLowerCase();
+    if (typeHint.includes("line") || typeHint.includes("edge") || typeHint.includes("connector") || typeHint.includes("link")) return true;
+    if (isObject(item.endpoint1) || isObject(item.endpoint2)) return true;
+    const hasRefs = !!(
+        item.fromId || item.toId || item.sourceId || item.targetId || item.startNodeId || item.endNodeId ||
+        item.source || item.target || item.from || item.to || item.nodeA || item.nodeB
+    );
+    const hasCoords = ["x1", "y1", "x2", "y2", "startX", "startY", "endX", "endY"].some(k => readNum(item, [k], NaN) === readNum(item, [k], NaN));
+    return hasRefs || hasCoords;
+}
+
+function looksLikeNodeItem(item) {
+    if (!isObject(item)) return false;
+    if (looksLikeLineItem(item)) return false;
+    const hasGeom = [
+        "x", "y", "left", "top", "centerX", "centerY", "cx", "cy",
+        "bounds.x", "bounds.y", "position.x", "position.y"
+    ].some(k => Number.isFinite(readNum(item, [k], NaN)));
+    const hasSize = ["width", "height", "w", "h", "bounds.width", "bounds.height", "size.width", "size.height"].some(k => Number.isFinite(readNum(item, [k], NaN)));
+    const hasShapeHints = !!readString(item, ["class", "shapeType", "shape", "type"], "") || Array.isArray(item.textAreas);
+    return hasGeom || hasSize || hasShapeHints;
+}
+
+function normalizeShapeType(shapeType) {
+    const val = (shapeType || "").toString().trim().toLowerCase();
+    const map = {
+        process: "rectangle",
+        decision: "diamond",
+        terminator: "terminator",
+        database: "cylinder",
+        data: "parallelogram",
+        io: "parallelogram",
+        connector: "circle",
+        document: "document",
+        preparation: "hexagon",
+        cloud: "cloud",
+        line: "line",
+        parenthesisleft: "brace-left",
+        parenthesisright: "brace-right",
+        "paren-left": "brace-left",
+        "paren-right": "brace-right",
+        "left-parenthesis": "brace-left",
+        "right-parenthesis": "brace-right",
+        "brace-left": "brace-left",
+        "brace-right": "brace-right",
+        "left-brace": "brace-left",
+        "right-brace": "brace-right"
+    };
+    const supported = new Set([
+        "rectangle", "diamond", "terminator", "parallelogram", "cylinder", "document", "hexagon", "circle",
+        "text-box", "sticky-note", "cloud", "line", "brace-left", "brace-right"
+    ]);
+    const mapped = map[val] || val;
+    return supported.has(mapped) ? mapped : "rectangle";
+}
+
+function asTextLabel(item, fallback = "") {
+    const explicit = readString(item, ["text", "label", "name", "title", "value", "text.value", "data.label"], "");
+    if (explicit) return explicit;
+    if (Array.isArray(item.textAreas)) {
+        const preferred = item.textAreas.find(t => isObject(t) && String(t.label || "").toLowerCase() === "text" && readString(t, ["text"], "").trim());
+        if (preferred) return readString(preferred, ["text"], fallback);
+        const firstMeaningful = item.textAreas.find(t => isObject(t) && !String(t.label || "").toLowerCase().includes("readonly") && readString(t, ["text"], "").trim());
+        if (firstMeaningful) return readString(firstMeaningful, ["text"], fallback);
+    }
+    if (isObject(item.text) && typeof item.text.value === "string") return item.text.value;
+    return fallback;
+}
+
+function extractNodeGeometry(item, defaultIndex) {
+    let hasSourceGeometry = false;
+    const width = Math.max(60, readNum(item, ["width", "w", "boundsWidth", "sizeX", "bounds.width", "size.width", "frame.width", "rect.width"], 140));
+    const height = Math.max(30, readNum(item, ["height", "h", "boundsHeight", "sizeY", "bounds.height", "size.height", "frame.height", "rect.height"], 60));
+
+    let x = readNum(item, ["centerX", "cx", "bounds.centerX", "position.centerX"], NaN);
+    let y = readNum(item, ["centerY", "cy", "bounds.centerY", "position.centerY"], NaN);
+
+    if (!Number.isFinite(x)) {
+        const left = readNum(item, ["x", "left", "posX", "boundsX", "bounds.x", "position.x", "frame.x", "rect.x"], NaN);
+        if (Number.isFinite(left)) {
+            x = left + width / 2;
+            hasSourceGeometry = true;
+        } else {
+            x = defaultIndex * 180;
+        }
+    } else {
+        hasSourceGeometry = true;
+    }
+    if (!Number.isFinite(y)) {
+        const top = readNum(item, ["y", "top", "posY", "boundsY", "bounds.y", "position.y", "frame.y", "rect.y"], NaN);
+        if (Number.isFinite(top)) {
+            y = top + height / 2;
+            hasSourceGeometry = true;
+        } else {
+            y = 0;
+        }
+    } else {
+        hasSourceGeometry = true;
+    }
+
+    return { x: snap(x), y: snap(y), width: snap(width), height: snap(height), hasSourceGeometry };
+}
+
+function autoLayoutNodesWhenGeometryMissing(nodesOut, linesOut) {
+    const ids = Object.keys(nodesOut);
+    if (ids.length === 0) return;
+
+    const degree = {};
+    ids.forEach(id => { degree[id] = 0; });
+    (linesOut || []).forEach(line => {
+        if (degree[line.fromId] !== undefined) degree[line.fromId] += 1;
+        if (degree[line.toId] !== undefined) degree[line.toId] += 1;
+    });
+
+    ids.sort((a, b) => {
+        const diff = (degree[b] || 0) - (degree[a] || 0);
+        if (diff !== 0) return diff;
+        return (nodesOut[a].text || "").localeCompare(nodesOut[b].text || "");
+    });
+
+    const columns = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(ids.length))));
+    const rows = Math.ceil(ids.length / columns);
+    const spacingX = 260;
+    const spacingY = 160;
+    const offsetX = ((columns - 1) * spacingX) / 2;
+    const offsetY = ((rows - 1) * spacingY) / 2;
+
+    ids.forEach((id, index) => {
+        const col = index % columns;
+        const row = Math.floor(index / columns);
+        nodesOut[id].x = snap((col * spacingX) - offsetX);
+        nodesOut[id].y = snap((row * spacingY) - offsetY);
+    });
+}
+
+function toArray(val) {
+    if (val === undefined || val === null) return [];
+    return Array.isArray(val) ? val : [val];
+}
+
+function getNearestNodeIdByPoint(x, y, nodeList) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || nodeList.length === 0) return null;
+    let bestId = null;
+    let bestDist = Infinity;
+    nodeList.forEach(node => {
+        const d = Math.hypot(x - node.x, y - node.y);
+        if (d < bestDist) {
+            bestDist = d;
+            bestId = node.id;
+        }
+    });
+    return bestId;
+}
+
+function getPortToward(node, otherNode) {
+    if (!node || !otherNode) return "right";
+    const dx = otherNode.x - node.x;
+    const dy = otherNode.y - node.y;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+        return dx >= 0 ? "right" : "left";
+    }
+    return dy >= 0 ? "bottom" : "top";
+}
+
+function normalizeImportedData(rawData) {
+    if (isFlowcraftFormat(rawData)) {
+        return { data: rawData, source: "flowcraft" };
+    }
+
+    // Some tools wrap payloads under common envelope keys.
+    const wrapped = [rawData?.diagram, rawData?.document, rawData?.data].find(isObject);
+    if (wrapped && isFlowcraftFormat(wrapped)) {
+        return { data: wrapped, source: "flowcraft" };
+    }
+
+    const lucidConverted = convertLucidchartLikeData(rawData);
+    if (lucidConverted) {
+        return { data: lucidConverted, source: "lucidchart" };
+    }
+
+    return null;
+}
+
+function convertLucidchartLikeData(rawData) {
+    const roots = [rawData].filter(isObject);
+    const pages = [];
+
+    if (Array.isArray(rawData?.pages)) pages.push(...rawData.pages.filter(isObject));
+    if (isObject(rawData?.page)) pages.push(rawData.page);
+    if (isObject(rawData?.document) && Array.isArray(rawData.document.pages)) {
+        pages.push(...rawData.document.pages.filter(isObject));
+    }
+
+    roots.push(...pages);
+
+    const shapeKeys = ["nodes", "shapes", "objects", "elements", "items", "entities", "items.shapes"]; 
+    const lineKeys = ["lines", "connectors", "edges", "links", "connections", "items.lines"]; 
+
+    const shapeCandidates = [];
+    const lineCandidates = [];
+
+    roots.forEach(root => {
+        shapeCandidates.push(...collectArrayCandidates(root, shapeKeys));
+        lineCandidates.push(...collectArrayCandidates(root, lineKeys));
+
+        // Mixed arrays are common, split by semantic type hints.
+        const mixed = collectArrayCandidates(root, ["items", "elements", "objects"]);
+        mixed.forEach(item => {
+            const t = (readString(item, ["type", "kind", "objectType"], "")).toLowerCase();
+            if (t.includes("line") || t.includes("edge") || t.includes("connector") || t.includes("link")) {
+                lineCandidates.push(item);
+            } else {
+                shapeCandidates.push(item);
+            }
+        });
+    });
+
+    // Deep fallback: many exports nest arrays under unknown keys.
+    const deepArrays = discoverArraysDeep(rawData, 6);
+    deepArrays.forEach(arr => {
+        if (!Array.isArray(arr) || arr.length === 0) return;
+        const nodeLike = arr.filter(looksLikeNodeItem);
+        const lineLike = arr.filter(looksLikeLineItem);
+        if (nodeLike.length >= 1) shapeCandidates.push(...nodeLike);
+        if (lineLike.length >= 1) lineCandidates.push(...lineLike);
+    });
+
+    const nodesOut = {};
+    const nodeList = [];
+    let fallbackIdx = 0;
+    let nodesWithGeometry = 0;
+
+    shapeCandidates.forEach(item => {
+        if (!isObject(item)) return;
+
+        if (looksLikeLineItem(item)) return;
+
+        const maybeType = readString(item, ["type", "shape", "shapeType", "kind"], "").toLowerCase();
+        if (maybeType.includes("line") || maybeType.includes("edge") || maybeType.includes("connector") || maybeType.includes("link")) {
+            return;
+        }
+
+        const geometry = extractNodeGeometry(item, fallbackIdx++);
+        const rawId = readString(item, ["id", "uuid", "key", "nodeId", "shapeId", "meta.id", "data.id"], "");
+        const id = rawId || `lucid_node_${fallbackIdx}`;
+        if (nodesOut[id]) return;
+
+        const shapeType = normalizeShapeType(readString(item, ["shapeType", "shape", "type", "kind", "class"], "rectangle"));
+        const imageUrl = readString(item, ["image.url"], "");
+        const node = {
+            id,
+            type: imageUrl ? "image" : "shape",
+            shapeType,
+            imageUrl: imageUrl || undefined,
+            x: geometry.x,
+            y: geometry.y,
+            width: geometry.width,
+            height: geometry.height,
+            text: asTextLabel(item, "Node"),
+            textOffset: { x: 0, y: 0 },
+            textSize: 14,
+            bgColor: sanitizeCssColor(readString(item, ["fillColor", "backgroundColor", "bgColor", "style.fill", "style.fillColor"], "#ffffff"), "#ffffff"),
+            borderColor: sanitizeCssColor(readString(item, ["strokeColor", "lineColor", "borderColor", "style.stroke", "style.strokeColor"], "#64748b"), "#64748b"),
+            borderWidth: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "borderWidth", "style.strokeWidth"], 2)),
+            borderStyle: readString(item, ["borderStyle", "lineStyle", "style.strokeStyle"], "solid"),
+            url: sanitizeUrl(readString(item, ["url", "link", "href", "hyperlink", "metadata.url"], ""))
+        };
+
+        if (node.type === "image") {
+            node.bgColor = "transparent";
+            node.borderColor = "transparent";
+            node.borderWidth = 0;
+        }
+
+        if (geometry.hasSourceGeometry) {
+            nodesWithGeometry += 1;
+        }
+
+        nodesOut[id] = node;
+        nodeList.push(node);
+    });
+
+    if (Object.keys(nodesOut).length === 0) {
+        return null;
+    }
+
+    const linesOut = [];
+    let lineIdx = 0;
+
+    lineCandidates.forEach(item => {
+        if (!isObject(item)) return;
+
+        const fromRef = item.fromId || item.from || item.sourceId || item.source || item.startNodeId || item.nodeA || getByPath(item, "source.id") || getByPath(item, "start.id") || getByPath(item, "endpoint1.connectedTo");
+        const toRef = item.toId || item.to || item.targetId || item.target || item.endNodeId || item.nodeB || getByPath(item, "target.id") || getByPath(item, "end.id") || getByPath(item, "endpoint2.connectedTo");
+
+        let fromId = typeof fromRef === "string" ? fromRef : readString(fromRef, ["id", "nodeId", "shapeId"], "");
+        let toId = typeof toRef === "string" ? toRef : readString(toRef, ["id", "nodeId", "shapeId"], "");
+
+        if (!nodesOut[fromId] || !nodesOut[toId]) {
+            const sx = readNum(item, ["x1", "startX", "fromX", "start.x", "source.x", "points.0.x"], NaN);
+            const sy = readNum(item, ["y1", "startY", "fromY", "start.y", "source.y", "points.0.y"], NaN);
+            const ex = readNum(item, ["x2", "endX", "toX", "end.x", "target.x"], NaN);
+            const ey = readNum(item, ["y2", "endY", "toY", "end.y", "target.y"], NaN);
+
+            if (!nodesOut[fromId]) fromId = getNearestNodeIdByPoint(sx, sy, nodeList);
+            if (!nodesOut[toId]) toId = getNearestNodeIdByPoint(ex, ey, nodeList);
+        }
+
+        if (!fromId || !toId || fromId === toId || !nodesOut[fromId] || !nodesOut[toId]) {
+            return;
+        }
+
+        const fromNode = nodesOut[fromId];
+        const toNode = nodesOut[toId];
+        const fromPort = getPortToward(fromNode, toNode);
+        const toPort = getPortToward(toNode, fromNode);
+
+        lineIdx += 1;
+        linesOut.push({
+            id: readString(item, ["id", "uuid", "key", "meta.id"], `lucid_line_${lineIdx}`),
+            fromId,
+            fromPort,
+            toId,
+            toPort,
+            lineType: "orthogonal",
+            lineStyle: readString(item, ["lineStyle", "style", "style.strokeStyle"], "solid"),
+            color: readString(item, ["strokeColor", "color", "lineColor", "style.stroke", "style.strokeColor"], "#64748b"),
+            thickness: Math.max(1, readNum(item, ["strokeWidth", "lineWidth", "thickness", "style.strokeWidth"], 2.5)),
+            hasArrow: readString(item, ["hasArrow", "arrow", "arrowType"], "end")
+        });
+    });
+
+    if (nodesWithGeometry === 0) {
+        autoLayoutNodesWhenGeometryMissing(nodesOut, linesOut);
+    }
+
+    return {
+        format: "flowcraft",
+        version: "1.0",
+        name: readString(rawData, ["name", "title", "documentName"], "Imported Lucidchart Diagram"),
+        nodes: nodesOut,
+        lines: linesOut
+    };
+}
+
+function getExportPayload() {
+    return {
+        format: "flowcraft",
+        version: "1.0",
+        name: currentDocName,
+        nodes: nodes,
+        lines: lines
+    };
+}
+
+function getSafeExportFilename() {
+    return currentDocName.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".flowchart";
+}
+
+async function exportJsonFile(options = {}) {
+    const forcePrompt = !!options.forcePrompt;
+    const serialized = JSON.stringify(getExportPayload(), null, 2);
+    const filename = getSafeExportFilename();
+
+    if (typeof window.showSaveFilePicker === "function") {
+        try {
+            if (!jsonExportFileHandle || forcePrompt) {
+                jsonExportFileHandle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                        description: "Flowchart JSON",
+                        accept: {
+                            "application/json": [".flowchart", ".json"]
+                        }
+                    }]
+                });
+            }
+
+            const writable = await jsonExportFileHandle.createWritable();
+            await writable.write(serialized);
+            await writable.close();
+            saveStatus.textContent = "JSON saved";
+            return;
+        } catch (err) {
+            if (err && err.name === "AbortError") {
+                saveStatus.textContent = "Export cancelled";
+                return;
+            }
+            jsonExportFileHandle = null;
+        }
+    }
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(serialized);
+    const a = document.createElement("a");
+    a.href = dataStr;
+    a.download = filename;
+    a.click();
+    saveStatus.textContent = "Export complete";
+}
+
+async function importJsonFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+        const data = JSON.parse(await file.text());
+        const normalized = normalizeImportedData(data);
+        if (!normalized) {
+            const topKeys = isObject(data) ? Object.keys(data).slice(0, 15).join(", ") : "(non-object json root)";
+            alert("Invalid format: could not detect FlowCraft/Lucidchart node data. Top-level keys: " + topKeys);
+            return;
+        }
+
+        loadSessionData(normalized.data);
+        currentLocalSaveName = "";
+        currentDriveFileId = null;
+        undoStack = [];
+        redoStack = [];
+        saveHistory();
+        centerCanvas();
+
+        if (normalized.source === "flowcraft") {
+            alert("Flowchart imported successfully!");
+        } else if (normalized.source === "lucidchart") {
+            alert("Lucidchart JSON imported successfully (best effort conversion).");
+        }
+    } catch (err) {
+        alert("Error parsing file: " + err.message);
+    } finally {
+        fileImportInput.value = "";
+    }
+}
+
+// --- Google Drive & OAuth Integration (Domain Restricted) ---
+
+function showGoogleConfigModal(show) {
+    if (show) updateGoogleConfigUiState();
+    googleConfigModal.classList.toggle("active", show);
+}
+
+function saveGoogleConfig() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (configuredGoogleClientId && !allowLocalClientIdOverride) {
+        alert("Shared app configuration is active. Local override is disabled.");
+        showGoogleConfigModal(false);
+        return;
+    }
+
+    const cid = inputClientId.value.trim();
+    if (!cid) {
+        alert("Please enter a valid Google Client ID.");
+        return;
+    }
+    if (!isValidGoogleClientId(cid)) {
+        alert("Invalid Google Client ID format. Expected *.apps.googleusercontent.com");
+        return;
+    }
+    googleClientId = cid;
+    localStorage.setItem("flowcraft_google_client_id", cid);
+    showGoogleConfigModal(false);
+    
+    initGoogleClient();
+}
+
+function clearGoogleConfig() {
+    if (configuredGoogleClientId && !allowLocalClientIdOverride) {
+        alert("Shared app configuration is active. Nothing to clear locally.");
+        showGoogleConfigModal(false);
+        return;
+    }
+
+    localStorage.removeItem("flowcraft_google_client_id");
+    googleClientId = getEffectiveGoogleClientId();
+    inputClientId.value = googleClientId;
+    showGoogleConfigModal(false);
+    if (googleClientId) {
+        alert("Local override cleared. Falling back to shared app configuration.");
+    } else {
+        alert("Google credentials cleared. Please configure again to use Google Drive.");
+    }
+    signOutGoogle();
+}
+
+function startGoogleSignIn() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    googleClientId = getEffectiveGoogleClientId();
+    if (!googleClientId) {
+        inputClientId.value = "";
+    }
+
+    if (!googleClientId) {
+        alert("Börja med att ange Google OAuth Client ID under OAuth Credentials.");
+        showGoogleConfigModal(true);
+        return;
+    }
+
+    if (typeof google === "undefined" || !google.accounts || !google.accounts.id) {
+        alert("Google Identity Services kunde inte laddas. Ladda om sidan och försök igen.");
+        return;
+    }
+
+    initGoogleClient();
+    document.getElementById("google-sign-in-btn").style.display = "block";
+    google.accounts.id.prompt();
+}
+
+// Initialize the Google OAuth & GIS sign-in button
+function initGoogleClient() {
+    if (!googleClientId) return;
+    if (!ensureTrustedOriginForGoogle()) return;
+    if (!isValidGoogleClientId(googleClientId)) {
+        console.warn("Skipping OAuth init due to invalid Google client ID format.");
+        return;
+    }
+    
+    try {
+        // Initialize GIS Login client – callback is kept inside the closure so it is not
+        // accessible as a global (window.handleGoogleSignInCallback), reducing the attack
+        // surface for malicious scripts that might try to invoke it with a forged credential.
+        const handleGoogleSignInCallback = (response) => {
+            try {
+                const payload = decodeJwt(response.credential);
+
+                if (!isValidGoogleJwtPayload(payload)) {
+                    alert("Access Denied:\nInvalid or expired credential.");
+                    signOutGoogle();
+                    return;
+                }
+
+                if (!isAllowedGoogleDomain(payload)) {
+                    alert("Access Denied:\nOnly Google accounts with a @hummel.se email are allowed to sign in.");
+                    signOutGoogle();
+                    return;
+                }
+                
+                userProfile = payload;
+                
+                // Update user UI card
+                document.getElementById("google-sign-in-btn").style.display = "none";
+                const profileCard = document.getElementById("user-profile");
+                profileCard.style.display = "flex";
+                document.getElementById("user-avatar").src = payload.picture;
+                document.getElementById("user-name").textContent = payload.name;
+                document.getElementById("user-email").textContent = payload.email;
+                
+                document.getElementById("google-sign-out").onclick = signOutGoogle;
+                
+                // Request Drive Access Token next
+                if (tokenClient) {
+                    tokenClient.requestAccessToken({ prompt: 'consent', hint: payload.email });
+                }
+            } catch (e) {
+                alert("Failed to sign in: " + e.message);
+            }
+        };
+
+        google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: handleGoogleSignInCallback,
+            hd: ALLOWED_GOOGLE_DOMAIN
+        });
+        
+        google.accounts.id.renderButton(
+            document.getElementById("google-sign-in-btn"),
+            { theme: "outline", size: "large" }
+        );
+        
+        // Initialize token client for Drive API OAuth scope
+        tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: googleClientId,
+            scope: "https://www.googleapis.com/auth/drive.file",
+            callback: (resp) => {
+                // Extra safety: never keep token unless user is validated for allowed domain.
+                if (resp && resp.access_token && isAllowedGoogleDomain(userProfile)) {
+                    accessToken = resp.access_token;
+                    document.getElementById("gdrive-actions").style.display = "flex";
+                    saveStatus.textContent = "Google Drive Connected";
+                } else {
+                    accessToken = "";
+                    document.getElementById("gdrive-actions").style.display = "none";
+                }
+            }
+        });
+    } catch (e) {
+        console.error("Error initializing Google GIS API:", e);
+    }
+}
+
+// Decode GIS JWT token payload client side (display only – not a substitute for server-side verification)
+function decodeJwt(token) {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+
+    return JSON.parse(jsonPayload);
+}
+
+function isValidGoogleJwtPayload(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    const now = Math.floor(Date.now() / 1000);
+    const validIssuers = ["accounts.google.com", "https://accounts.google.com"];
+    if (!validIssuers.includes(String(payload.iss || ""))) return false;
+    if (payload.exp && Number(payload.exp) < now) return false;
+    if (googleClientId && String(payload.aud || "") !== googleClientId) return false;
+    return true;
+}
+
+function signOutGoogle() {
+    const revokedEmail = userProfile && userProfile.email ? userProfile.email : "";
+    userProfile = null;
+    accessToken = "";
+    
+    document.getElementById("google-sign-in-btn").style.display = "block";
+    document.getElementById("user-profile").style.display = "none";
+    document.getElementById("gdrive-actions").style.display = "none";
+    saveStatus.textContent = "Saved locally";
+    currentDriveFileId = null;
+    clearDriveAutosaveState();
+    
+    // Revoke token if exists
+    if (revokedEmail) {
+        google.accounts.id.revoke(revokedEmail, () => {});
+    }
+}
+
+async function saveToGoogleDrive(options = {}) {
+    const silent = !!options.silent;
+    const allowRetryOnAuthFailure = !!options.allowRetryOnAuthFailure;
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+    
+    const flowchartData = getExportPayload();
+    const saveFingerprint = JSON.stringify(flowchartData);
+    
+    const fileContent = JSON.stringify(flowchartData, null, 2);
+    const filename = currentDocName + ".flowchart";
+    
+    saveStatus.textContent = silent ? "Auto-saving to Google Drive..." : "Saving to Google Drive...";
+    
+    try {
+        const metadata = {
+            name: filename,
+            mimeType: 'application/json'
+        };
+        
+        const boundary = 'flowcraft_boundary';
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const close_delim = "\r\n--" + boundary + "--";
+        
+        let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+        let method = 'POST';
+        
+        if (currentDriveFileId) {
+            url = `https://www.googleapis.com/upload/drive/v3/files/${currentDriveFileId}?uploadType=multipart`;
+            method = 'PATCH';
+        }
+        
+        const multipartRequestBody =
+            delimiter +
+            'Content-Type: application/json\r\n\r\n' +
+            JSON.stringify(metadata) +
+            delimiter +
+            'Content-Type: application/json\r\n\r\n' +
+            fileContent +
+            close_delim;
+            
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': `multipart/related; boundary=${boundary}`
+            },
+            body: multipartRequestBody
+        });
+
+        if (!response.ok && (response.status === 401 || response.status === 403) && allowRetryOnAuthFailure) {
+            accessToken = "";
+            if (tokenClient) {
+                tokenClient.requestAccessToken({ prompt: "" });
+                saveStatus.textContent = "Refreshing Drive session...";
+            }
+            throw new Error("Drive authorization expired. Retrying after token refresh.");
+        }
+        
+        if (!response.ok) throw new Error("HTTP error " + response.status);
+        
+        const file = await response.json();
+        currentDriveFileId = file.id;
+        lastDriveSavedFingerprint = saveFingerprint;
+        
+        saveStatus.textContent = silent ? "Cloud auto-saved" : "Cloud saved";
+        if (!silent) {
+            alert(`Successfully saved to Google Drive!\nFile ID: ${file.id}`);
+        }
+    } catch(err) {
+        saveStatus.textContent = "Save failed";
+        if (silent) {
+            console.warn("Google Drive auto-save failed:", err);
+        } else {
+            alert("Google Drive upload failed: " + err.message);
+        }
+    }
+}
+
+function showGdriveExplorer(show) {
+    gdriveExplorerModal.classList.toggle("active", show);
+}
+
+async function openGoogleDriveExplorer() {
+    if (!ensureTrustedOriginForGoogle()) return;
+
+    if (!accessToken) {
+        if (tokenClient) tokenClient.requestAccessToken();
+        else alert("Please configure Google Client ID first.");
+        return;
+    }
+    
+    showGdriveExplorer(true);
+    gdriveFilesContainer.innerHTML = '<div class="empty-state">Loading Drive files...</div>';
+    
+    try {
+        // Query application/json files created or opened by drive.file scope
+        const url = 'https://www.googleapis.com/drive/v3/files?q=mimeType="application/json" and trashed=false&fields=files(id,name,modifiedTime)';
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (!response.ok) throw new Error("Status code " + response.status);
+        
+        const data = await response.json();
+        const files = data.files || [];
+        
+        // Filter files with .flowchart name pattern or JSON containing signature
+        const filteredFiles = files.filter(f => f.name.endsWith(".flowchart") || f.name.endsWith(".json"));
+        
+        gdriveFilesContainer.innerHTML = "";
+        if (filteredFiles.length === 0) {
+            gdriveFilesContainer.innerHTML = '<div class="empty-state">No flowchart files found on Google Drive. Make sure to save a file first.</div>';
+            return;
+        }
+        
+        filteredFiles.forEach(file => {
+            const item = document.createElement("div");
+            item.className = "gdrive-file-item";
+            item.addEventListener("click", () => loadGoogleDriveFile(file.id));
+            
+            const info = document.createElement("div");
+            info.className = "gdrive-file-info";
+            
+            const nameEl = document.createElement("span");
+            nameEl.className = "gdrive-file-name";
+            nameEl.textContent = file.name.replace(".flowchart", "");
+            
+            const dateEl = document.createElement("span");
+            dateEl.className = "gdrive-file-date";
+            dateEl.textContent = "Modified: " + new Date(file.modifiedTime).toLocaleString();
+            
+            info.appendChild(nameEl);
+            info.appendChild(dateEl);
+            
+            const loadIcon = document.createElement("i");
+            loadIcon.className = "fa-solid fa-cloud-arrow-down";
+            loadIcon.style.color = resolveCssColorVar("--accent-primary", "#0ea5e9");
+
+            const actions = document.createElement("div");
+            actions.className = "gdrive-file-actions";
+
+            const trashBtn = document.createElement("button");
+            trashBtn.className = "gdrive-file-trash-btn";
+            trashBtn.title = "Move to Drive trash";
+            trashBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+            trashBtn.addEventListener("click", (e) => trashGoogleDriveFile(file.id, file.name, e));
+
+            actions.appendChild(loadIcon);
+            actions.appendChild(trashBtn);
+            
+            item.appendChild(info);
+            item.appendChild(actions);
+            gdriveFilesContainer.appendChild(item);
+        });
+    } catch(e) {
+        const errorColor = resolveCssColorVar("--accent-danger", "#ef4444");
+        const errDiv = document.createElement("div");
+        errDiv.className = "empty-state";
+        errDiv.style.color = errorColor;
+        errDiv.textContent = "Error loading files: " + e.message;
+        gdriveFilesContainer.replaceChildren(errDiv);
+    }
+}
+
+async function trashGoogleDriveFile(fileId, fileName, event) {
+    event.stopPropagation();
+
+    if (!accessToken) {
+        alert("Google session expired. Please sign in again.");
+        return;
+    }
+
+    const confirmed = confirm(`Move "${fileName}" to Google Drive trash?`);
+    if (!confirmed) return;
+
+    try {
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}`;
+        const response = await fetch(url, {
+            method: "PATCH",
+            headers: {
+                "Authorization": `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ trashed: true })
+        });
+
+        if (!response.ok) throw new Error("HTTP error " + response.status);
+
+        if (currentDriveFileId === fileId) {
+            currentDriveFileId = null;
+        }
+
+        saveStatus.textContent = "Moved to Drive trash";
+        await openGoogleDriveExplorer();
+    } catch (err) {
+        alert("Could not move file to Google Drive trash: " + err.message);
+    }
+}
+
+async function loadGoogleDriveFile(fileId) {
+    showGdriveExplorer(false);
+    saveStatus.textContent = "Opening file...";
+    
+    try {
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (!response.ok) throw new Error("HTTP error " + response.status);
+        
+        const data = await response.json();
+        
+        const normalized = normalizeImportedData(data);
+        if (normalized) {
+            currentDriveFileId = fileId;
+            currentLocalSaveName = "";
+            loadSessionData(normalized.data);
+            lastDriveSavedFingerprint = JSON.stringify(getExportPayload());
+            undoStack = [];
+            redoStack = [];
+            saveHistory();
+            centerCanvas();
+            saveStatus.textContent = "Cloud saved";
+            alert(`Flowchart "${normalized.data.name}" successfully loaded from Google Drive!`);
+        } else {
+            alert("File exists but does not match a supported FlowCraft/Lucidchart JSON format.");
+            saveStatus.textContent = "Load failed";
+        }
+    } catch(err) {
+        saveStatus.textContent = "Load failed";
+        alert("Google Drive download failed: " + err.message);
+    }
+}
+
+// --- Walkthrough Help Modal ---
+function showHelpModal(show) {
+    helpModal.classList.toggle("active", show);
+}
+
+// --- Image Captures & Document Exports ---
+
+function getNodeTextColor(node) {
+    if (node.bgColor === "transparent") return resolveCssColorVar("--text-main", "#0f172a");
+    const isDark = ["#334155", "#0f172a", "#4f46e5", "#0ea5e9", "#ef4444", "#8b5cf6"].includes((node.bgColor || "").toLowerCase());
+    return isDark ? "#ffffff" : resolveCssColorVar("--text-main", "#0f172a");
+}
+
+function setDashedStroke(ctx, style) {
+    if (style === "dashed") ctx.setLineDash([6, 4]);
+    else if (style === "dotted") ctx.setLineDash([2, 3]);
+    else ctx.setLineDash([]);
+}
+
+function addRoundedRectPath(ctx, x, y, w, h, r) {
+    const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+}
+
+function drawArrowHead(ctx, tipX, tipY, dirX, dirY, color, size = 10) {
+    const len = Math.hypot(dirX, dirY) || 1;
+    const ux = dirX / len;
+    const uy = dirY / len;
+    const baseX = tipX - ux * size;
+    const baseY = tipY - uy * size;
+    const nx = -uy;
+    const ny = ux;
+    const wing = size * 0.45;
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + nx * wing, baseY + ny * wing);
+    ctx.lineTo(baseX - nx * wing, baseY - ny * wing);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawNodeShapePath(ctx, node, x, y, w, h, strokeW) {
+    const halfStroke = strokeW / 2;
+    const left = x + halfStroke;
+    const top = y + halfStroke;
+    const width = Math.max(1, w - strokeW);
+    const height = Math.max(1, h - strokeW);
+
+    switch (node.shapeType) {
+        case "rectangle":
+            addRoundedRectPath(ctx, left, top, width, height, 2);
+            break;
+        case "terminator":
+            addRoundedRectPath(ctx, left, top, width, height, height / 2);
+            break;
+        case "circle":
+            ctx.beginPath();
+            ctx.ellipse(x + w / 2, y + h / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+            ctx.closePath();
+            break;
+        case "diamond":
+            ctx.beginPath();
+            ctx.moveTo(x + w / 2, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h / 2);
+            ctx.lineTo(x + w / 2, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h / 2);
+            ctx.closePath();
+            break;
+        case "parallelogram":
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.15, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + strokeW);
+            ctx.lineTo(x + w * 0.85, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h - strokeW);
+            ctx.closePath();
+            break;
+        case "cylinder": {
+            const ryCap = Math.min(12, height * 0.15);
+            const rxCap = width / 2;
+            const cx = left + width / 2;
+            const topY = top + ryCap;
+            const bottomY = top + height - ryCap;
+            const right = left + width;
+            ctx.beginPath();
+            ctx.moveTo(left, topY);
+            ctx.lineTo(left, bottomY);
+            ctx.ellipse(cx, bottomY, rxCap, ryCap, 0, Math.PI, 0, true);
+            ctx.lineTo(right, topY);
+            ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI, true);
+            ctx.closePath();
+            break;
+        }
+        case "document": {
+            const waveH = Math.min(15, h * 0.15);
+            ctx.beginPath();
+            ctx.moveTo(x + strokeW, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h - waveH);
+            ctx.quadraticCurveTo(x + w * 0.75, y + h - waveH * 2, x + w * 0.5, y + h - waveH);
+            ctx.quadraticCurveTo(x + w * 0.25, y + h, x + strokeW, y + h - waveH);
+            ctx.closePath();
+            break;
+        }
+        case "hexagon":
+            ctx.beginPath();
+            ctx.moveTo(x + w * 0.18, y + strokeW);
+            ctx.lineTo(x + w * 0.82, y + strokeW);
+            ctx.lineTo(x + w - strokeW, y + h / 2);
+            ctx.lineTo(x + w * 0.82, y + h - strokeW);
+            ctx.lineTo(x + w * 0.18, y + h - strokeW);
+            ctx.lineTo(x + strokeW, y + h / 2);
+            ctx.closePath();
+            break;
+        case "cloud":
+            addCloudPath(ctx, x + strokeW / 2, y + strokeW / 2, w - strokeW, h - strokeW);
+            break;
+        case "line":
+            ctx.beginPath();
+            ctx.moveTo(left, y + h / 2);
+            ctx.lineTo(x + w - halfStroke, y + h / 2);
+            break;
+        case "sticky-note":
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.closePath();
+            break;
+        default:
+            ctx.beginPath();
+            ctx.rect(left, top, width, height);
+            ctx.closePath();
+            break;
+    }
+}
+
+function drawCylinderTopCap(ctx, node, x, y, w, h, strokeW) {
+    if (!node || node.shapeType !== "cylinder") return;
+
+    const halfStroke = strokeW / 2;
+    const left = x + halfStroke;
+    const top = y + halfStroke;
+    const width = Math.max(1, w - strokeW);
+    const height = Math.max(1, h - strokeW);
+    const ryCap = Math.min(12, height * 0.15);
+    const rxCap = width / 2;
+    const cx = left + width / 2;
+    const topY = top + ryCap;
+
+    if (node.bgColor && node.bgColor !== "transparent") {
+        ctx.fillStyle = node.bgColor;
+        ctx.beginPath();
+        ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    if (strokeW > 0) {
+        ctx.strokeStyle = node.borderColor || "#64748b";
+        ctx.lineWidth = strokeW;
+        setDashedStroke(ctx, node.borderStyle || "solid");
+        ctx.beginPath();
+        ctx.ellipse(cx, topY, rxCap, ryCap, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+}
+
+function buildCloudPathData(x, y, w, h) {
+    const p = {
+        s: { x: x + w * 0.2, y: y + h * 0.72 },
+        p1: { x: x + w * 0.08, y: y + h * 0.72 },
+        p2: { x: x + w * 0.16, y: y + h * 0.5 },
+        p3: { x: x + w * 0.38, y: y + h * 0.44 },
+        p4: { x: x + w * 0.62, y: y + h * 0.36 },
+        p5: { x: x + w * 0.84, y: y + h * 0.5 },
+        p6: { x: x + w * 0.92, y: y + h * 0.72 },
+        p7: { x: x + w * 0.76, y: y + h * 0.8 }
+    };
+
+    return [
+        `M ${p.s.x} ${p.s.y}`,
+        `C ${x + w * 0.1} ${y + h * 0.86}, ${x + w * 0.02} ${y + h * 0.82}, ${p.p1.x} ${p.p1.y}`,
+        `C ${x + w * 0.02} ${y + h * 0.58}, ${x + w * 0.06} ${y + h * 0.44}, ${p.p2.x} ${p.p2.y}`,
+        `C ${x + w * 0.18} ${y + h * 0.3}, ${x + w * 0.3} ${y + h * 0.28}, ${p.p3.x} ${p.p3.y}`,
+        `C ${x + w * 0.42} ${y + h * 0.2}, ${x + w * 0.56} ${y + h * 0.2}, ${p.p4.x} ${p.p4.y}`,
+        `C ${x + w * 0.7} ${y + h * 0.2}, ${x + w * 0.82} ${y + h * 0.3}, ${p.p5.x} ${p.p5.y}`,
+        `C ${x + w * 0.98} ${y + h * 0.54}, ${x + w * 0.98} ${y + h * 0.66}, ${p.p6.x} ${p.p6.y}`,
+        `C ${x + w * 0.9} ${y + h * 0.84}, ${x + w * 0.84} ${y + h * 0.84}, ${p.p7.x} ${p.p7.y}`,
+        `C ${x + w * 0.64} ${y + h * 0.92}, ${x + w * 0.34} ${y + h * 0.92}, ${p.s.x} ${p.s.y}`,
+        "Z"
+    ].join(" ");
+}
+
+function addCloudPath(ctx, x, y, w, h) {
+    const p = {
+        s: { x: x + w * 0.2, y: y + h * 0.72 },
+        p1: { x: x + w * 0.08, y: y + h * 0.72 },
+        p2: { x: x + w * 0.16, y: y + h * 0.5 },
+        p3: { x: x + w * 0.38, y: y + h * 0.44 },
+        p4: { x: x + w * 0.62, y: y + h * 0.36 },
+        p5: { x: x + w * 0.84, y: y + h * 0.5 },
+        p6: { x: x + w * 0.92, y: y + h * 0.72 },
+        p7: { x: x + w * 0.76, y: y + h * 0.8 }
+    };
+
+    ctx.beginPath();
+    ctx.moveTo(p.s.x, p.s.y);
+    ctx.bezierCurveTo(x + w * 0.1, y + h * 0.86, x + w * 0.02, y + h * 0.82, p.p1.x, p.p1.y);
+    ctx.bezierCurveTo(x + w * 0.02, y + h * 0.58, x + w * 0.06, y + h * 0.44, p.p2.x, p.p2.y);
+    ctx.bezierCurveTo(x + w * 0.18, y + h * 0.3, x + w * 0.3, y + h * 0.28, p.p3.x, p.p3.y);
+    ctx.bezierCurveTo(x + w * 0.42, y + h * 0.2, x + w * 0.56, y + h * 0.2, p.p4.x, p.p4.y);
+    ctx.bezierCurveTo(x + w * 0.7, y + h * 0.2, x + w * 0.82, y + h * 0.3, p.p5.x, p.p5.y);
+    ctx.bezierCurveTo(x + w * 0.98, y + h * 0.54, x + w * 0.98, y + h * 0.66, p.p6.x, p.p6.y);
+    ctx.bezierCurveTo(x + w * 0.9, y + h * 0.84, x + w * 0.84, y + h * 0.84, p.p7.x, p.p7.y);
+    ctx.bezierCurveTo(x + w * 0.64, y + h * 0.92, x + w * 0.34, y + h * 0.92, p.s.x, p.s.y);
+    ctx.closePath();
+}
+
+function parseRichTextForCanvas(html, defaultColor) {
+    const temp = document.createElement("div");
+    temp.innerHTML = String(html || "").replace(/<br\s*\/?>/gi, '\n');
+    const runs = [];
+    
+    function traverse(node, color, bold) {
+        if (node.nodeType === 3) {
+            if (node.textContent) {
+                const parts = node.textContent.split('\n');
+                for (let i = 0; i < parts.length; i++) {
+                    if (i > 0) runs.push({ text: '\n' });
+                    if (parts[i]) runs.push({ text: parts[i], color, bold });
+                }
+            }
+        } else if (node.nodeType === 1) {
+            if (node.tagName === 'DIV' || node.tagName === 'P') {
+                if (runs.length > 0 && runs[runs.length - 1].text !== '\n') {
+                    runs.push({ text: '\n' });
+                }
+            }
+            let nextColor = color;
+            let nextBold = bold;
+            if (node.tagName === 'B' || node.tagName === 'STRONG') nextBold = true;
+            if (node.style && node.style.color) nextColor = node.style.color;
+            if (node.style && node.style.fontWeight === 'bold') nextBold = true;
+            
+            node.childNodes.forEach(child => traverse(child, nextColor, nextBold));
+            
+            if (node.tagName === 'DIV' || node.tagName === 'P') {
+                runs.push({ text: '\n' });
+            }
+        }
+    }
+    traverse(temp, defaultColor, false);
+    return runs;
+}
+
+function wrapRichTextForCanvas(ctx, runs, maxWidth, defaultFontSize, defaultBold) {
+    const lines = [];
+    let currentLineRuns = [];
+    let currentLineWidth = 0;
+    
+    const pushLine = () => {
+        lines.push({ runs: currentLineRuns, width: currentLineWidth });
+        currentLineRuns = [];
+        currentLineWidth = 0;
+    };
+    
+    const setFont = (bold) => {
+        ctx.font = `${bold || defaultBold ? "bold " : ""}${defaultFontSize}px Inter, Arial, sans-serif`;
+    };
+
+    runs.forEach(run => {
+        if (run.text === '\n') {
+            pushLine();
+            return;
+        }
+        
+        setFont(run.bold);
+        const words = run.text.split(/(\s+)/);
+        
+        words.forEach(word => {
+            if (!word) return;
+            const w = ctx.measureText(word).width;
+            
+            if (currentLineWidth + w > maxWidth && currentLineWidth > 0 && word.trim().length > 0) {
+                pushLine();
+                setFont(run.bold);
+            }
+            
+            if (w > maxWidth && word.trim().length > 0) {
+                let chunk = "";
+                for (const ch of word) {
+                    const cw = ctx.measureText(chunk + ch).width;
+                    if (currentLineWidth + cw > maxWidth && currentLineWidth > 0) {
+                        pushLine();
+                        setFont(run.bold);
+                        chunk = ch;
+                    } else {
+                        chunk += ch;
+                    }
+                }
+                if (chunk) {
+                    currentLineRuns.push({ text: chunk, color: run.color, bold: run.bold });
+                    currentLineWidth += ctx.measureText(chunk).width;
+                }
+            } else {
+                currentLineRuns.push({ text: word, color: run.color, bold: run.bold });
+                currentLineWidth += w;
+            }
+        });
+    });
+    
+    if (currentLineRuns.length > 0) pushLine();
+    if (lines.length === 0) lines.push({ runs: [], width: 0 });
+    return lines;
+}
+
+function drawNodeLabel(ctx, node, x, y, w, h) {
+    if (node.type === "image") return;
+    const isBold = !!node.textBold;
+    const textSize = Number(node.textSize) || 14;
+    const offsetX = (node.textOffset && Number(node.textOffset.x)) || 0;
+    const offsetY = (node.textOffset && Number(node.textOffset.y)) || 0;
+    const lineHeight = textSize * 1.3;
+    const placement = getTextPlacementConfig(node.textPosition);
+    const paddingX = Math.max(8, Math.round(textSize * 0.7));
+    const paddingY = Math.max(8, Math.round(textSize * 0.6));
+    const contentWidth = Math.max(0, w - paddingX * 2);
+
+    const defaultColor = getNodeTextColor(node);
+    const runs = parseRichTextForCanvas(node.text, defaultColor);
+    
+    ctx.textBaseline = "alphabetic";
+    const linesText = wrapRichTextForCanvas(ctx, runs, contentWidth, textSize, isBold);
+    const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
+
+    let anchorX = x + w / 2;
+    let anchorY = y + h / 2;
+
+    if (placement.horizontal === "left") anchorX = x + paddingX;
+    if (placement.horizontal === "right") anchorX = x + w - paddingX;
+    if (placement.vertical === "top") anchorY = y + paddingY;
+    if (placement.vertical === "bottom") anchorY = y + h - paddingY;
+
+    let startY = anchorY + lineHeight * 0.8;
+    if (placement.vertical === "center") {
+        startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
+    } else if (placement.vertical === "top") {
+        startY = y + paddingY + lineHeight * 0.8;
+    } else if (placement.vertical === "bottom") {
+        startY = y + h - paddingY - totalHeight + lineHeight * 0.8;
+    }
+
+    if (placement.vertical === "center" && placement.horizontal === "left") {
+        startY = y + h / 2 - totalHeight / 2 + lineHeight * 0.8;
+    }
+
+    linesText.forEach((lineObj, index) => {
+        let drawX = anchorX + offsetX;
+        if (placement.horizontal === "left") drawX = x + paddingX + offsetX;
+        if (placement.horizontal === "right") drawX = x + w - paddingX + offsetX;
+        if (placement.horizontal === "center") drawX = x + w / 2 + offsetX;
+        
+        let currentX = drawX;
+        if (placement.horizontal === "center") currentX -= lineObj.width / 2;
+        if (placement.horizontal === "right") currentX -= lineObj.width;
+        
+        const currentY = startY + index * lineHeight + offsetY;
+        
+        lineObj.runs.forEach(run => {
+            ctx.font = `${run.bold || isBold ? "bold " : ""}${textSize}px Inter, Arial, sans-serif`;
+            ctx.fillStyle = run.color;
+            ctx.fillText(run.text, currentX, currentY);
+            currentX += ctx.measureText(run.text).width;
+        });
+    });
+}
+
+function wrapTextForCanvas(ctx, rawLines, maxWidth) {
+    if (!Array.isArray(rawLines) || rawLines.length === 0) return [""];
+    if (!Number.isFinite(maxWidth) || maxWidth <= 0) return rawLines.length ? rawLines : [""];
+
+    const wrapped = [];
+
+    rawLines.forEach((sourceLine) => {
+        const line = String(sourceLine || "");
+        if (!line.trim()) {
+            wrapped.push("");
+            return;
+        }
+
+        let current = "";
+        const words = line.split(/\s+/).filter(Boolean);
+
+        words.forEach((word) => {
+            const candidate = current ? `${current} ${word}` : word;
+            if (ctx.measureText(candidate).width <= maxWidth) {
+                current = candidate;
+                return;
+            }
+
+            if (current) wrapped.push(current);
+
+            // Break long unspaced words to match CSS break-word behavior.
+            if (ctx.measureText(word).width > maxWidth) {
+                let chunk = "";
+                for (const ch of word) {
+                    const nextChunk = chunk + ch;
+                    if (ctx.measureText(nextChunk).width <= maxWidth || !chunk) {
+                        chunk = nextChunk;
+                    } else {
+                        wrapped.push(chunk);
+                        chunk = ch;
+                    }
+                }
+                current = chunk;
+            } else {
+                current = word;
+            }
+        });
+
+        wrapped.push(current);
+    });
+
+    return wrapped.length ? wrapped : [""];
+}
+
+function getTextPlacementConfig(textPosition) {
+    switch (textPosition) {
+        case "top-left":
+            return { horizontal: "left", vertical: "top", textAlign: "left" };
+        case "top-right":
+            return { horizontal: "right", vertical: "top", textAlign: "right" };
+        case "bottom-left":
+            return { horizontal: "left", vertical: "bottom", textAlign: "left" };
+        case "bottom-right":
+            return { horizontal: "right", vertical: "bottom", textAlign: "right" };
+        case "top":
+            return { horizontal: "center", vertical: "top", textAlign: "center" };
+        case "bottom":
+            return { horizontal: "center", vertical: "bottom", textAlign: "center" };
+        case "left":
+            return { horizontal: "left", vertical: "center", textAlign: "left" };
+        case "right":
+            return { horizontal: "right", vertical: "center", textAlign: "right" };
+        case "center":
+        default:
+            return { horizontal: "center", vertical: "center", textAlign: "center" };
+    }
+}
+
+function applyTextPositionStyles(textContainer, textSpan, textPosition) {
+    const placement = getTextPlacementConfig(textPosition);
+    textContainer.style.justifyContent = placement.horizontal === "left" ? "flex-start" : placement.horizontal === "right" ? "flex-end" : "center";
+    textContainer.style.alignItems = placement.vertical === "top" ? "flex-start" : placement.vertical === "bottom" ? "flex-end" : "center";
+    textSpan.style.textAlign = placement.textAlign;
+}
+
+function drawLineOnCanvas(ctx, line) {
+    const fromNode = nodes[line.fromId];
+    const toNode = nodes[line.toId];
+    if (!fromNode || !toNode) return;
+
+    const fromCoords = getPortCoords(line.fromId)[line.fromPort];
+    const toCoords = getPortCoords(line.toId)[line.toPort];
+    if (!fromCoords || !toCoords) return;
+
+    const color = line.color || "#64748b";
+    const thickness = Number(line.thickness) || 2.5;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    setDashedStroke(ctx, line.lineStyle);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    let startDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
+    let endDir = { x: toCoords.x - fromCoords.x, y: toCoords.y - fromCoords.y };
+
+    if (isBraceGlyphType(line.glyphType)) {
+        const geom = getBraceGeometry(line, fromCoords, toCoords);
+
+        ctx.beginPath();
+        ctx.moveTo(fromCoords.x, fromCoords.y);
+        ctx.lineTo(geom.topCorner.x, geom.topCorner.y);
+        ctx.lineTo(geom.bottomCorner.x, geom.bottomCorner.y);
+        ctx.lineTo(toCoords.x, toCoords.y);
+        ctx.stroke();
+
+        startDir = geom.startTangent;
+        endDir = geom.endTangent;
+    } else if (line.lineType === "curved") {
+        if (line.manualWaypoint && Number.isFinite(line.manualWaypoint.x) && Number.isFinite(line.manualWaypoint.y)) {
+            const wx = line.manualWaypoint.x;
+            const wy = line.manualWaypoint.y;
+            ctx.beginPath();
+            ctx.moveTo(fromCoords.x, fromCoords.y);
+            ctx.quadraticCurveTo(wx, wy, toCoords.x, toCoords.y);
+            ctx.stroke();
+
+            startDir = { x: wx - fromCoords.x, y: wy - fromCoords.y };
+            endDir = { x: toCoords.x - wx, y: toCoords.y - wy };
+        } else {
+            const distance = Math.hypot(toCoords.x - fromCoords.x, toCoords.y - fromCoords.y);
+            const ctrlOffset = Math.min(120, distance * 0.4);
+            const ctrl1 = getPortVectorOffset(line.fromPort, ctrlOffset);
+            const ctrl2 = getPortVectorOffset(line.toPort, ctrlOffset);
+            const c1x = fromCoords.x + ctrl1.x;
+            const c1y = fromCoords.y + ctrl1.y;
+            const c2x = toCoords.x + ctrl2.x;
+            const c2y = toCoords.y + ctrl2.y;
+
+            ctx.beginPath();
+            ctx.moveTo(fromCoords.x, fromCoords.y);
+            ctx.bezierCurveTo(c1x, c1y, c2x, c2y, toCoords.x, toCoords.y);
+            ctx.stroke();
+
+            startDir = { x: c1x - fromCoords.x, y: c1y - fromCoords.y };
+            endDir = { x: toCoords.x - c2x, y: toCoords.y - c2y };
+        }
+    } else if (line.lineType === "straight") {
+        const points = getLineStraightPolyline(line, fromCoords, toCoords);
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.stroke();
+
+        startDir = { x: points[1].x - points[0].x, y: points[1].y - points[0].y };
+        const n = points.length;
+        endDir = { x: points[n - 1].x - points[n - 2].x, y: points[n - 1].y - points[n - 2].y };
+    } else {
+        const points = getLineOrthogonalPolyline(line, fromCoords, toCoords);
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.stroke();
+
+        startDir = { x: points[1].x - points[0].x, y: points[1].y - points[0].y };
+        const n = points.length;
+        endDir = { x: points[n - 1].x - points[n - 2].x, y: points[n - 1].y - points[n - 2].y };
+    }
+
+    if (line.hasArrow === "end" || line.hasArrow === "both") {
+        drawArrowHead(ctx, toCoords.x, toCoords.y, endDir.x, endDir.y, color, Math.max(8, thickness * 3.5));
+    }
+    if (line.hasArrow === "start" || line.hasArrow === "both") {
+        drawArrowHead(ctx, fromCoords.x, fromCoords.y, -startDir.x, -startDir.y, color, Math.max(8, thickness * 3.5));
+    }
+
+    ctx.setLineDash([]);
+
+    // Draw line label
+    const hasLabel = typeof line.label === "string" && line.label.trim().length > 0;
+    if (hasLabel) {
+        const anchor = getLineRouteHandlePoint(line, fromCoords, toCoords);
+        const offset = getLineLabelOffset(line);
+        const labelSize = Math.max(10, Number(line.labelSize) || 14);
+        const runs = parseRichTextForCanvas(line.label, "#0f172a");
+        const linesText = wrapRichTextForCanvas(ctx, runs, 220, labelSize, true); // line labels are bold 600 by default
+        
+        const lineHeight = labelSize * 1.25;
+        const totalHeight = Math.max(lineHeight, linesText.length * lineHeight);
+        const maxLineWidth = linesText.reduce((max, l) => Math.max(max, l.width), 0);
+        
+        const centerX = anchor.x + offset.x;
+        const centerY = anchor.y + offset.y;
+        
+        const padX = 7;
+        const padY = 3;
+        const bgW = maxLineWidth + padX * 2;
+        const bgH = totalHeight + padY * 2;
+        
+        // Draw background box
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.strokeStyle = "rgba(100, 116, 139, 0.55)";
+        ctx.lineWidth = 1;
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        if (ctx.roundRect) {
+            ctx.roundRect(centerX - bgW / 2, centerY - bgH / 2, bgW, bgH, 8);
+        } else {
+            ctx.rect(centerX - bgW / 2, centerY - bgH / 2, bgW, bgH);
+        }
+        ctx.fill();
+        ctx.stroke();
+        
+        // Draw text
+        ctx.textBaseline = "middle";
+        const startY = centerY - totalHeight / 2 + lineHeight / 2;
+        
+        linesText.forEach((lineObj, index) => {
+            let currentX = centerX - lineObj.width / 2;
+            const currentY = startY + index * lineHeight;
+            
+            lineObj.runs.forEach(run => {
+                ctx.font = `bold ${labelSize}px Inter, Arial, sans-serif`;
+                ctx.fillStyle = run.color;
+                ctx.fillText(run.text, currentX, currentY);
+                currentX += ctx.measureText(run.text).width;
+            });
+        });
+    }
+}
+
+function loadImageElement(src) {
+    return new Promise((resolve) => {
+        if (!src) {
+            resolve(null);
+            return;
+        }
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = src;
+    });
+}
+
+// Utility to render the flowchart model into a single PNG image URL
+async function getFlowchartCanvasImage(options = {}) {
+    const requestedScale = Number(options.scale);
+    const exportScale = Number.isFinite(requestedScale) && requestedScale > 0 ? Math.min(4, requestedScale) : 1;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const nodeIds = Object.keys(nodes);
+
+    if (nodeIds.length === 0) {
+        minX = -100; maxX = 100; minY = -100; maxY = 100;
+    } else {
+        nodeIds.forEach(id => {
+            const node = nodes[id];
+            minX = Math.min(minX, node.x - node.width / 2);
+            maxX = Math.max(maxX, node.x + node.width / 2);
+            minY = Math.min(minY, node.y - node.height / 2);
+            maxY = Math.max(maxY, node.y + node.height / 2);
+        });
+    }
+
+    const margin = 40;
+    const outW = Math.max(1, Math.ceil((maxX - minX) + margin * 2));
+    const outH = Math.max(1, Math.ceil((maxY - minY) + margin * 2));
+    const originX = minX - margin;
+    const originY = minY - margin;
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = Math.max(1, Math.round(outW * exportScale));
+    exportCanvas.height = Math.max(1, Math.round(outH * exportScale));
+    const ctx = exportCanvas.getContext("2d");
+    if (!ctx) throw new Error("Could not create export canvas");
+
+    ctx.setTransform(exportScale, 0, 0, exportScale, 0, 0);
+
+    ctx.fillStyle = resolveCssColorVar("--bg-app", "#f8fafc");
+    ctx.fillRect(0, 0, outW, outH);
+
+    ctx.save();
+    ctx.translate(-originX, -originY);
+
+    const orderedNodes = Object.values(nodes).slice().sort((a, b) => (a.zIndex || 10) - (b.zIndex || 10));
+    const imageNodes = orderedNodes.filter(n => n.type === "image");
+    const loadedImages = await Promise.all(imageNodes.map(n => loadImageElement(n.imageUrl)));
+    const imageMap = new Map();
+    imageNodes.forEach((node, idx) => imageMap.set(node.id, loadedImages[idx]));
+
+    orderedNodes.forEach(node => {
+        if (node.type === "line-anchor") return;
+
+        const x = node.x - node.width / 2;
+        const y = node.y - node.height / 2;
+        const w = node.width;
+        const h = node.height;
+
+        if (node.type === "image") {
+            const img = imageMap.get(node.id);
+            if (img) {
+                const crop = node.crop || { left: 0, top: 0, right: 0, bottom: 0 };
+                const left = Math.max(0, Math.min(0.9, Number(crop.left) || 0));
+                const top = Math.max(0, Math.min(0.9, Number(crop.top) || 0));
+                const right = Math.max(0, Math.min(0.9, Number(crop.right) || 0));
+                const bottom = Math.max(0, Math.min(0.9, Number(crop.bottom) || 0));
+                const visW = Math.max(0.05, 1 - left - right);
+                const visH = Math.max(0.05, 1 - top - bottom);
+
+                const sx = img.width * left;
+                const sy = img.height * top;
+                const sw = img.width * visW;
+                const sh = img.height * visH;
+
+                ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+            }
+
+            const borderW = Number(node.borderWidth) || 1;
+            if (borderW > 0) {
+                ctx.strokeStyle = node.borderColor || "#cbd5e1";
+                ctx.lineWidth = borderW;
+                setDashedStroke(ctx, node.borderStyle || "solid");
+                ctx.strokeRect(x + borderW / 2, y + borderW / 2, Math.max(1, w - borderW), Math.max(1, h - borderW));
+                ctx.setLineDash([]);
+            }
+            return;
+        }
+
+        if (node.shapeType !== "text-box") {
+            const strokeW = Number(node.borderWidth) || 0;
+            ctx.fillStyle = node.bgColor || "transparent";
+            ctx.strokeStyle = node.borderColor || "#64748b";
+            ctx.lineWidth = strokeW;
+            setDashedStroke(ctx, node.borderStyle || "solid");
+
+            drawNodeShapePath(ctx, node, x, y, w, h, strokeW);
+            if (node.bgColor && node.bgColor !== "transparent") ctx.fill();
+            if (strokeW > 0) ctx.stroke();
+            drawCylinderTopCap(ctx, node, x, y, w, h, strokeW);
+
+            if (node.shapeType === "sticky-note") {
+                const foldSize = Math.min(w, h) * 0.2;
+                const s = strokeW || 1;
+                ctx.fillStyle = "#fef9c3";
+                ctx.beginPath();
+                ctx.moveTo(x + w - foldSize - s / 2, y + s / 2);
+                ctx.lineTo(x + w - foldSize - s / 2, y + foldSize + s / 2);
+                ctx.lineTo(x + w - s / 2, y + foldSize + s / 2);
+                ctx.closePath();
+                ctx.fill();
+                ctx.strokeStyle = node.borderColor || "#ca8a04";
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+        }
+
+        drawNodeLabel(ctx, node, x, y, w, h);
+    });
+
+    // Match on-canvas behavior where connectors render above node shapes.
+    lines.forEach(line => drawLineOnCanvas(ctx, line));
+
+    ctx.restore();
+
+    return {
+        imgData: exportCanvas.toDataURL("image/png"),
+        width: outW,
+        height: outH
+    };
+}
+
+async function exportToPDF() {
+    saveStatus.textContent = "Exporting PDF...";
+    try {
+        const capture = await getFlowchartCanvasImage({ scale: 3 });
+        const { jsPDF } = window.jspdf;
+        
+        // Create matching landscape/portrait layout size PDF
+        const orientation = capture.width > capture.height ? "l" : "p";
+        const pdf = new jsPDF({
+            orientation: orientation,
+            unit: "px",
+            format: [capture.width + 40, capture.height + 40]
+        });
+        
+        pdf.addImage(capture.imgData, "PNG", 20, 20, capture.width, capture.height);
+        pdf.save(currentDocName.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".pdf");
+        
+        saveStatus.textContent = "Export complete";
+    } catch(e) {
+        alert("Failed to export PDF: " + e.message);
+        saveStatus.textContent = "Export failed";
+    }
+}
+
+// Start the App
+document.addEventListener("DOMContentLoaded", init);
