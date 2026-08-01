@@ -566,13 +566,12 @@ function init() {
 
         initGoogleClient();
 
-        if (!accessToken && userProfile && tokenClient) {
-            // Reconnecting Drive access is required every load since tokens are
-            // never persisted. Try a silent grant first (no popup) using the
-            // hinted email; falls back to the visible sign-in button rendered
-            // above if the browser/session needs explicit consent.
-            tokenClient.requestAccessToken({ prompt: "", hint: userProfile.email || "" });
-        }
+        // Note: we deliberately do NOT auto-call tokenClient.requestAccessToken()
+        // here. Browsers block/ignore OAuth popups that aren't triggered by a
+        // direct user gesture (e.g. a click), and firing one automatically on
+        // load can also race with a user-initiated sign-in click on the same
+        // tokenClient, leaving Drive access in a broken state. Reconnecting to
+        // Drive is always an explicit user action (clicking the sign-in button).
     }
 
     if (currentDriveFileId && accessToken) {
@@ -5364,8 +5363,12 @@ function initGoogleClient() {
                 } else {
                     accessToken = "";
                     document.getElementById("gdrive-actions").style.display = "none";
-                    // Silent reconnection failed (or was denied) - let the user sign in explicitly.
+                    // Reconnection failed or was denied - let the user sign in explicitly.
                     document.getElementById("google-sign-in-btn").style.display = "block";
+                    if (resp && resp.error) {
+                        console.warn("Google Drive access grant failed:", resp.error);
+                        saveStatus.textContent = "Google Drive connection failed - please try signing in again";
+                    }
                 }
             }
         });
