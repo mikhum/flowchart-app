@@ -530,8 +530,10 @@ function init() {
     showStartupDebugStatus(startupPathLabel);
 
     // Apply hydrated Drive session to UI
+    // Note: the session hint only carries a profile (email/name/picture) for UI
+    // continuity. It never carries a live OAuth access token (security hardening),
+    // so the sign-in button is only hidden once a fresh token is actually granted.
     if (userProfile) {
-        document.getElementById("google-sign-in-btn").style.display = "none";
         const profileCard = document.getElementById("user-profile");
         if (profileCard) {
             profileCard.style.display = "flex";
@@ -542,16 +544,35 @@ function init() {
             if (nm) nm.textContent = userProfile.name || "Signed in";
             if (em) em.textContent = userProfile.email || "";
         }
-        if (accessToken) {
-            const da = document.getElementById("gdrive-actions");
-            if (da) da.style.display = "flex";
-        }
+    }
+
+    if (accessToken) {
+        const da = document.getElementById("gdrive-actions");
+        if (da) da.style.display = "flex";
     }
 
     // Google GIS Auto login check
     if (googleClientId && isTrustedRuntimeOrigin()) {
         inputClientId.value = googleClientId;
+
+        // Reveal the sign-in button container BEFORE rendering the Google button
+        // into it. Google's rendered button is sized from the container's layout
+        // at render time, so rendering into a display:none container can leave it
+        // invisible/zero-size even after the container is unhidden afterwards.
+        if (!accessToken) {
+            const signInBtn = document.getElementById("google-sign-in-btn");
+            if (signInBtn) signInBtn.style.display = "block";
+        }
+
         initGoogleClient();
+
+        if (!accessToken && userProfile && tokenClient) {
+            // Reconnecting Drive access is required every load since tokens are
+            // never persisted. Try a silent grant first (no popup) using the
+            // hinted email; falls back to the visible sign-in button rendered
+            // above if the browser/session needs explicit consent.
+            tokenClient.requestAccessToken({ prompt: "", hint: userProfile.email || "" });
+        }
     }
 
     if (currentDriveFileId && accessToken) {
@@ -5338,10 +5359,13 @@ function initGoogleClient() {
                 if (resp && resp.access_token && isAllowedGoogleDomain(userProfile)) {
                     accessToken = resp.access_token;
                     document.getElementById("gdrive-actions").style.display = "flex";
+                    document.getElementById("google-sign-in-btn").style.display = "none";
                     saveStatus.textContent = "Google Drive Connected";
                 } else {
                     accessToken = "";
                     document.getElementById("gdrive-actions").style.display = "none";
+                    // Silent reconnection failed (or was denied) - let the user sign in explicitly.
+                    document.getElementById("google-sign-in-btn").style.display = "block";
                 }
             }
         });
