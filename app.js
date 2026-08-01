@@ -321,6 +321,7 @@ const closeHelpModal = document.getElementById("close-help-modal");
 const googleConfigModal = document.getElementById("google-config-modal");
 const btnConfigureGoogle = document.getElementById("btn-configure-google");
 const btnGoogleSignIn = document.getElementById("btn-google-sign-in");
+const btnConnectGdrive = document.getElementById("btn-connect-gdrive");
 const closeConfigModal = document.getElementById("close-config-modal");
 const btnSaveConfig = document.getElementById("btn-save-config");
 const btnClearConfig = document.getElementById("btn-clear-config");
@@ -549,6 +550,13 @@ function init() {
     if (accessToken) {
         const da = document.getElementById("gdrive-actions");
         if (da) da.style.display = "flex";
+    } else if (userProfile) {
+        // Already signed in (profile hint present) but no live Drive token yet -
+        // offer an explicit, user-gesture-triggered way to (re)connect Drive
+        // instead of the classic Google sign-in button (which would be confusing
+        // to show again for an already-signed-in user).
+        const connectBtn = document.getElementById("btn-connect-gdrive");
+        if (connectBtn) connectBtn.style.display = "inline-flex";
     }
 
     // Google GIS Auto login check
@@ -559,7 +567,7 @@ function init() {
         // into it. Google's rendered button is sized from the container's layout
         // at render time, so rendering into a display:none container can leave it
         // invisible/zero-size even after the container is unhidden afterwards.
-        if (!accessToken) {
+        if (!accessToken && !userProfile) {
             const signInBtn = document.getElementById("google-sign-in-btn");
             if (signInBtn) signInBtn.style.display = "block";
         }
@@ -824,6 +832,7 @@ function setupEventListeners() {
     
     if (btnConfigureGoogle) btnConfigureGoogle.addEventListener("click", () => showGoogleConfigModal(true));
     if (btnGoogleSignIn) btnGoogleSignIn.addEventListener("click", startGoogleSignIn);
+    if (btnConnectGdrive) btnConnectGdrive.addEventListener("click", connectGoogleDrive);
     closeConfigModal.addEventListener("click", () => showGoogleConfigModal(false));
     btnSaveConfig.addEventListener("click", saveGoogleConfig);
     btnClearConfig.addEventListener("click", clearGoogleConfig);
@@ -5264,6 +5273,21 @@ function clearGoogleConfig() {
     signOutGoogle();
 }
 
+// Explicit, user-gesture-triggered request for Drive OAuth scope. Used when the
+// user is already signed in (profile hint/ID token present) but no Drive access
+// token has been granted yet - e.g. after the initial consent popup was
+// dismissed/blocked, or on a fresh page load where tokens are never persisted.
+function connectGoogleDrive() {
+    if (!tokenClient) {
+        initGoogleClient();
+    }
+    if (!tokenClient) {
+        alert("Google Drive isn't ready yet. Please reload the page and try again.");
+        return;
+    }
+    tokenClient.requestAccessToken({ prompt: "consent", hint: userProfile ? userProfile.email || "" : "" });
+}
+
 function startGoogleSignIn() {
     if (!ensureTrustedOriginForGoogle()) return;
 
@@ -5328,6 +5352,7 @@ function initGoogleClient() {
                 document.getElementById("user-email").textContent = payload.email;
                 
                 document.getElementById("google-sign-out").onclick = signOutGoogle;
+                document.getElementById("btn-connect-gdrive").style.display = "none";
                 
                 // Request Drive Access Token next
                 if (tokenClient) {
@@ -5359,15 +5384,22 @@ function initGoogleClient() {
                     accessToken = resp.access_token;
                     document.getElementById("gdrive-actions").style.display = "flex";
                     document.getElementById("google-sign-in-btn").style.display = "none";
+                    document.getElementById("btn-connect-gdrive").style.display = "none";
                     saveStatus.textContent = "Google Drive Connected";
                 } else {
                     accessToken = "";
                     document.getElementById("gdrive-actions").style.display = "none";
-                    // Reconnection failed or was denied - let the user sign in explicitly.
-                    document.getElementById("google-sign-in-btn").style.display = "block";
+                    // Reconnection failed or was denied - offer an explicit retry.
+                    // If we already have a signed-in profile, prefer the "Connect
+                    // Drive" button over re-showing the classic sign-in button.
+                    if (userProfile) {
+                        document.getElementById("btn-connect-gdrive").style.display = "inline-flex";
+                    } else {
+                        document.getElementById("google-sign-in-btn").style.display = "block";
+                    }
                     if (resp && resp.error) {
                         console.warn("Google Drive access grant failed:", resp.error);
-                        saveStatus.textContent = "Google Drive connection failed - please try signing in again";
+                        saveStatus.textContent = "Google Drive connection failed - please try again";
                     }
                 }
             }
@@ -5405,6 +5437,7 @@ function signOutGoogle() {
     
     document.getElementById("google-sign-in-btn").style.display = "block";
     document.getElementById("user-profile").style.display = "none";
+    document.getElementById("btn-connect-gdrive").style.display = "none";
     document.getElementById("gdrive-actions").style.display = "none";
     saveStatus.textContent = "Saved locally";
     currentDriveFileId = null;
